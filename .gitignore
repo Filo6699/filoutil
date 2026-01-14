@@ -13,3 +13,4 @@ build/
 /*.sql
 dev/
 backup/
+backups/
