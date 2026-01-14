@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import signal
-import sys
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -121,46 +120,50 @@ def main() -> None:
         level=log_level,
     )
 
+    # Important for production: httpx logs include full URLs (Telegram bot token is in the URL).
+    # Default these libraries to WARNING unless explicitly overridden.
+    httpx_level = os.getenv("HTTPX_LOG_LEVEL", "WARNING").upper()
+    logging.getLogger("httpx").setLevel(httpx_level)
+    logging.getLogger("httpcore").setLevel(httpx_level)
+
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise SystemExit(
             "Missing TELEGRAM_BOT_TOKEN. Set it in your environment or create a .env file."
         )
 
-    # Initialize PostgreSQL database
-    init_db()
-
-    app = build_app(token)
-
-    # Setup graceful shutdown and heartbeat
     heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "60"))
 
-    loop = asyncio.get_event_loop()
+    async def run_app() -> None:
+        # Initialize PostgreSQL database
+        init_db()
 
-    def shutdown_handler(sig, frame):
-        logging.info(f"Received signal {sig}, shutting down...")
-        reason = f"Signal {sig}"
-        try:
-            with SessionLocal() as db:
-                update_heartbeat(db, status="offline", exit_reason=reason)
-        except Exception as e:
-            logging.error(f"Error updating status on shutdown: {e}")
-        # We don't exit here, we let the app stop gracefully if possible,
-        # but for run_polling we often need to stop the loop or just exit.
-        sys.exit(0)
+        app = build_app(token)
 
-    signal.signal(signal.SIGINT, shutdown_handler)
-    signal.signal(signal.SIGTERM, shutdown_handler)
+        stop_event = asyncio.Event()
+        exit_reason: dict[str, str | None] = {"reason": None}
 
-    async def run_app():
+        def request_shutdown(sig: signal.Signals) -> None:
+            logging.info("Received %s, requesting shutdown...", sig)
+            exit_reason["reason"] = f"Signal {int(sig)}"
+            stop_event.set()
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, lambda s=sig: request_shutdown(s))
+            except NotImplementedError:
+                # Fallback (e.g. Windows). In containers on Linux, add_signal_handler works.
+                signal.signal(sig, lambda *_args, s=sig: request_shutdown(s))
+
         await app.initialize()
         await notify_admins_online(app)
 
         # Start heartbeat
-        asyncio.create_task(heartbeat_task(heartbeat_interval))
+        heartbeat = asyncio.create_task(heartbeat_task(heartbeat_interval), name="heartbeat_task")
 
         # Start monitoring service
-        asyncio.create_task(monitoring_task(app))
+        monitoring = asyncio.create_task(monitoring_task(app), name="monitoring_task")
 
         # run_polling handles network errors during polling.
         # bootstrap_retries=-1 ensures it keeps trying to start even if network is down.
@@ -170,18 +173,36 @@ def main() -> None:
         )
         await app.start()
 
-        # Keep running until interrupted
         try:
-            while True:
-                await asyncio.sleep(3600)
-        except (KeyboardInterrupt, SystemExit):
-            pass
+            await stop_event.wait()
         finally:
+            # Mark offline before stopping, best-effort
+            try:
+                with SessionLocal() as db:
+                    update_heartbeat(db, status="offline", exit_reason=exit_reason["reason"])
+            except Exception as e:
+                logging.error("Error updating status on shutdown: %s", e)
+
+            for t in (heartbeat, monitoring):
+                t.cancel()
+            for t in (heartbeat, monitoring):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logging.error("Background task failed during shutdown: %s", e, exc_info=True)
+
+            # Stop telegram components
+            try:
+                await app.updater.stop()
+            except Exception:
+                logging.exception("Failed to stop updater cleanly")
             await app.stop()
             await app.shutdown()
 
     try:
-        loop.run_until_complete(run_app())
+        asyncio.run(run_app())
     except Exception as e:
         logging.error(f"Bot crashed: {e}")
         try:
