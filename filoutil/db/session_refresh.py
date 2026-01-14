@@ -72,3 +72,33 @@ def get_all_active_sessions(db: Session) -> list[SessionRefresh]:
     return (
         db.execute(select(SessionRefresh).where(SessionRefresh.status == "running")).scalars().all()
     )
+
+
+def update_reminder_due_at(
+    db: Session, session_refresh_id: int, reminder_due_at: datetime
+) -> SessionRefresh | None:
+    """Update the reminder due date for a session refresh."""
+    session_refresh = db.execute(
+        select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
+    ).scalar_one_or_none()
+
+    if session_refresh:
+        session_refresh.reminder_due_at = reminder_due_at
+        db.commit()
+        db.refresh(session_refresh)
+
+    return session_refresh
+
+
+def mark_reminder_sent(db: Session, session_refresh_id: int) -> SessionRefresh | None:
+    """Mark that a reminder was sent for a session refresh."""
+    session_refresh = db.execute(
+        select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
+    ).scalar_one_or_none()
+
+    if session_refresh:
+        session_refresh.last_reminder_sent_at = datetime.utcnow()
+        db.commit()
+        db.refresh(session_refresh)
+
+    return session_refresh

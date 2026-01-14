@@ -17,6 +17,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String, default="user")
     whitelisted: Mapped[bool] = mapped_column(Boolean, default=False)
     settings: Mapped[dict] = mapped_column(JSON, default={})
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -126,6 +127,8 @@ class SessionRefresh(Base):
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="running")  # running, stopped, failed
     refresh_interval_s: Mapped[int] = mapped_column(Integer, default=300)
+    last_reminder_sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    reminder_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship()

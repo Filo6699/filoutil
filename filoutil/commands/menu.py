@@ -20,6 +20,9 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔄 Session Refresh", callback_data="menu:refresh_session"),
             InlineKeyboardButton("⚙️ Refresh Settings", callback_data="menu:refresh_settings"),
         ],
+        [
+            InlineKeyboardButton("⏰ Reminder Settings", callback_data="menu:reminder_settings"),
+        ],
         [InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -191,6 +194,51 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if "Message is not modified" not in str(e):
                     raise
 
+    elif action == "reminder_settings":
+        # Show reminder settings directly
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            settings = user.settings or {}
+            reset_time = settings.get("reminder_reset_time", "03:00")
+            timezone = settings.get("reminder_timezone", "UTC")
+
+            text = (
+                f"⏰ *Reminder Settings*\n\n"
+                f"*Reset time:* {reset_time}\n"
+                f"*Timezone:* {timezone}\n\n"
+                f"To configure, send:\n"
+                f"`/reminder_settings <HH:MM> <timezone>`\n\n"
+                f"Example: `/reminder_settings 03:00 Asia/Almaty`"
+            )
+
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")]]
+            )
+
+            try:
+                if query.message.photo:
+                    await query.message.delete()
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(
+                        text, reply_markup=keyboard, parse_mode="Markdown"
+                    )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+
     elif action == "help":
         text = (
             "ℹ️ *Help*\n\n"
@@ -198,11 +246,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/menu` - Show main menu\n"
             "• `/monitor` or `/m` - Manage service monitors\n"
             "• `/refresh_session` - Start LMS session refresh\n"
-            "• `/refresh_settings` - Configure refresh interval\n\n"
+            "• `/refresh_settings` - Configure refresh interval\n"
+            "• `/reminder_settings` - Configure reminder settings\n\n"
             "*Features:*\n\n"
             "📊 *Monitors* - Monitor your services and websites\n"
             "🔄 *Session Refresh* - Keep your LMS session alive automatically\n"
-            "⚙️ *Settings* - Configure refresh intervals\n\n"
+            "⚙️ *Settings* - Configure refresh intervals\n"
+            "⏰ *Reminders* - Get notified about active sessions\n\n"
             "Use the menu buttons to navigate!"
         )
         keyboard = InlineKeyboardMarkup(

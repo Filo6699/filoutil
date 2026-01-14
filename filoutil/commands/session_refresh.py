@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -113,6 +114,12 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         session_refresh = create_session_refresh(
             db, user.id, sesskey, moodleSession, refresh_interval
         )
+
+        # Set default reminder due date (1 day from now)
+        from filoutil.db.session_refresh import update_reminder_due_at
+
+        reminder_due_at = datetime.utcnow() + timedelta(days=1)
+        update_reminder_due_at(db, session_refresh.id, reminder_due_at)
 
         # Don't start the task here - let the scheduler pick it up to avoid duplicates
         # The scheduler will detect the new active session and start the task
