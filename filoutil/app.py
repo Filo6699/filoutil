@@ -17,6 +17,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+from filoutil.commands.admin import db_query, shell_command
 from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
 from filoutil.commands.reminder import (
@@ -119,6 +120,9 @@ def build_app(token: str) -> Application:
     app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
     app.add_handler(CallbackQueryHandler(reminder_callback, pattern="^reminder:"))
+    # Admin commands
+    app.add_handler(CommandHandler("shell", shell_command))
+    app.add_handler(CommandHandler("db", db_query))
 
     # Generic message handler for text input (e.g. monitor edits, reminder settings)
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
