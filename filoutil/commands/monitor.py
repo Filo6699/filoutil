@@ -93,6 +93,79 @@ def get_monitor_edit_keyboard(monitor):
     return InlineKeyboardMarkup(keyboard)
 
 
+# --- Helper Functions ---
+
+
+async def _show_monitor_view(db, query, context, m_id):
+    """Helper function to show monitor view."""
+    monitor = get_monitor(db, m_id)
+    if not monitor:
+        if query.message.photo:
+            await query.message.delete()
+            await context.bot.send_message(chat_id=query.message.chat_id, text="Monitor not found.")
+        else:
+            try:
+                await query.edit_message_text("Monitor not found.")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+        return
+
+    recent = get_recent_check_runs(db, m_id, limit=1)
+    last_run = recent[0] if recent else None
+
+    text = (
+        f"🖥 *Monitor Details*\n\n"
+        f"*Name:* {monitor.name}\n"
+        f"*URL:* {monitor.url}\n"
+        f"*Status:* {monitor.status.upper()}\n"
+        f"*Interval:* {monitor.interval_s}s\n"
+        f"*Last Check:* {monitor.last_check_at.strftime('%Y-%m-%d %H:%M:%S') if monitor.last_check_at else 'Never'}\n"
+    )
+    if last_run:
+        text += f"*Latency:* {last_run.latency_ms:.2f}ms\n"
+        if last_run.error:
+            text += f"*Last Error:* `{last_run.error}`\n"
+        if last_run.ssl_expiry:
+            days = (last_run.ssl_expiry - datetime.utcnow()).days
+            text += f"*SSL Expires in:* {days} days\n"
+
+    if query.message.photo:
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text,
+            reply_markup=get_monitor_details_keyboard(monitor),
+            parse_mode="Markdown",
+        )
+    else:
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=get_monitor_details_keyboard(monitor),
+                parse_mode="Markdown",
+            )
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise
+
+
+async def _show_edit_menu(db, query, m_id):
+    """Helper function to show edit menu."""
+    monitor = get_monitor(db, m_id)
+    if not monitor:
+        return
+    try:
+        await query.edit_message_text(
+            f"📝 *Editing Monitor: {monitor.name}*\n" f"Choose a field to modify:",
+            reply_markup=get_monitor_edit_keyboard(monitor),
+            parse_mode="Markdown",
+        )
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
+
+
 # --- Handlers ---
 
 
@@ -188,58 +261,7 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         elif action == "view":
             m_id = int(data[2])
-            monitor = get_monitor(db, m_id)
-            if not monitor:
-                if query.message.photo:
-                    await query.message.delete()
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id, text="Monitor not found."
-                    )
-                else:
-                    try:
-                        await query.edit_message_text("Monitor not found.")
-                    except BadRequest as e:
-                        if "Message is not modified" not in str(e):
-                            raise
-                return
-
-            recent = get_recent_check_runs(db, m_id, limit=1)
-            last_run = recent[0] if recent else None
-
-            text = (
-                f"🖥 *Monitor Details*\n\n"
-                f"*Name:* {monitor.name}\n"
-                f"*URL:* {monitor.url}\n"
-                f"*Status:* {monitor.status.upper()}\n"
-                f"*Interval:* {monitor.interval_s}s\n"
-                f"*Last Check:* {monitor.last_check_at.strftime('%Y-%m-%d %H:%M:%S') if monitor.last_check_at else 'Never'}\n"
-            )
-            if last_run:
-                text += f"*Latency:* {last_run.latency_ms:.2f}ms\n"
-                if last_run.error:
-                    text += f"*Last Error:* `{last_run.error}`\n"
-                if last_run.ssl_expiry:
-                    days = (last_run.ssl_expiry - datetime.utcnow()).days
-                    text += f"*SSL Expires in:* {days} days\n"
-
-            if query.message.photo:
-                await query.message.delete()
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=text,
-                    reply_markup=get_monitor_details_keyboard(monitor),
-                    parse_mode="Markdown",
-                )
-            else:
-                try:
-                    await query.edit_message_text(
-                        text,
-                        reply_markup=get_monitor_details_keyboard(monitor),
-                        parse_mode="Markdown",
-                    )
-                except BadRequest as e:
-                    if "Message is not modified" not in str(e):
-                        raise
+            await _show_monitor_view(db, query, context, m_id)
 
         elif action == "refresh":
             m_id = int(data[2])
@@ -256,18 +278,16 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     if "Message is not modified" not in str(e):
                         raise
                 await check_monitor(db, monitor)
-                # Re-trigger view
-                query.data = f"mon:view:{m_id}"
-                await monitor_callback(update, context)
+                # Show view directly
+                await _show_monitor_view(db, query, context, m_id)
 
         elif action == "toggle":
             m_id = int(data[2])
             monitor = get_monitor(db, m_id)
             if monitor:
                 update_monitor(db, m_id, enabled=not monitor.enabled)
-                # Re-trigger view
-                query.data = f"mon:view:{m_id}"
-                await monitor_callback(update, context)
+                # Show view directly
+                await _show_monitor_view(db, query, context, m_id)
 
         elif action == "delete_confirm":
             m_id = int(data[2])
@@ -304,19 +324,7 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         elif action == "edit_menu":
             m_id = int(data[2])
-            monitor = get_monitor(db, m_id)
-            if not monitor:
-                return
-
-            try:
-                await query.edit_message_text(
-                    f"📝 *Editing Monitor: {monitor.name}*\n" f"Choose a field to modify:",
-                    reply_markup=get_monitor_edit_keyboard(monitor),
-                    parse_mode="Markdown",
-                )
-            except BadRequest as e:
-                if "Message is not modified" not in str(e):
-                    raise
+            await _show_edit_menu(db, query, m_id)
 
         elif action == "edit":
             m_id = int(data[2])
@@ -329,9 +337,8 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if field in ["alert_on_down", "alert_on_up"]:
                 current_val = getattr(monitor, field)
                 update_monitor(db, m_id, **{field: not current_val})
-                # Show menu again
-                query.data = f"mon:edit_menu:{m_id}"
-                await monitor_callback(update, context)
+                # Show edit menu directly
+                await _show_edit_menu(db, query, m_id)
                 return
 
             # For other fields, we need text input
@@ -471,8 +478,7 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     parse_mode="Markdown",
                 )
                 # Show the view again in the original message
-                query.data = f"mon:view:{m_id}"
-                await monitor_callback(update, context)
+                await _show_monitor_view(db, query, context, m_id)
 
         elif action == "set_default_range":
             new_range = data[2]
@@ -484,9 +490,78 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 user.settings = settings
                 db.commit()
                 await query.answer(f"✅ Default time range set to {new_range}")
-                # Re-trigger stats view to show updated state (hide the pin button)
-                query.data = f"mon:stats:{m_id}:{new_range}"
-                await monitor_callback(update, context)
+                # Show stats view directly to show updated state (hide the pin button)
+                monitor = get_monitor(db, m_id)
+                if not monitor:
+                    return
+                if new_range == "1h":
+                    recent = get_check_runs_by_time_range(db, m_id, hours=1)
+                elif new_range == "6h":
+                    recent = get_check_runs_by_time_range(db, m_id, hours=6)
+                elif new_range == "24h":
+                    recent = get_check_runs_by_time_range(db, m_id, hours=24)
+                elif new_range == "1month":
+                    recent = get_check_runs_by_time_range(db, m_id, days=30)
+                else:
+                    recent = get_check_runs_by_time_range(db, m_id, hours=24)
+                if not recent:
+                    await query.answer("No data yet for charts.")
+                    return
+                time_range_buttons = [
+                    InlineKeyboardButton(
+                        f"{'◉' if new_range == '1h' else '○'} 1h",
+                        callback_data=f"mon:stats:{m_id}:1h",
+                    ),
+                    InlineKeyboardButton(
+                        f"{'◉' if new_range == '6h' else '○'} 6h",
+                        callback_data=f"mon:stats:{m_id}:6h",
+                    ),
+                    InlineKeyboardButton(
+                        f"{'◉' if new_range == '24h' else '○'} 24h",
+                        callback_data=f"mon:stats:{m_id}:24h",
+                    ),
+                    InlineKeyboardButton(
+                        f"{'◉' if new_range == '1month' else '○'} 1 month",
+                        callback_data=f"mon:stats:{m_id}:1month",
+                    ),
+                ]
+                stats_kb = InlineKeyboardMarkup(
+                    [
+                        time_range_buttons,
+                        [InlineKeyboardButton("⬅️ Back", callback_data=f"mon:view:{m_id}")],
+                    ]
+                )
+                range_labels = {
+                    "1h": "last hour",
+                    "6h": "last 6 hours",
+                    "24h": "last 24 hours",
+                    "1month": "last month",
+                }
+                range_label = range_labels.get(new_range, new_range)
+                chart_buf = await generate_monitor_charts(monitor.name, recent, new_range)
+                if query.message.photo:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id,
+                        photo=chart_buf,
+                        caption=f"📊 *{monitor.name}* ({range_label}, {len(recent)} checks)",
+                        reply_markup=stats_kb,
+                        parse_mode="Markdown",
+                    )
+                    await query.message.delete()
+                else:
+                    try:
+                        await query.edit_message_text(
+                            f"📊 Generating charts for {monitor.name}...", reply_markup=stats_kb
+                        )
+                    except BadRequest as e:
+                        if "Message is not modified" not in str(e):
+                            raise
+                    await query.message.reply_photo(
+                        photo=chart_buf,
+                        caption=f"📊 *{monitor.name}* ({range_label}, {len(recent)} checks)",
+                        reply_markup=stats_kb,
+                        parse_mode="Markdown",
+                    )
 
         elif action == "add_start":
             # Start the add monitor flow - prompt for name
