@@ -112,3 +112,20 @@ class Incident(Base):
 
     # Relationships
     monitor: Mapped["Monitor"] = relationship(back_populates="incidents")
+
+
+class SessionRefresh(Base):
+    __tablename__ = "session_refresh"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    sesskey: Mapped[str] = mapped_column(String)
+    moodleSession: Mapped[str] = mapped_column(String)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="running")  # running, stopped, failed
+    refresh_interval_s: Mapped[int] = mapped_column(Integer, default=300)
+
+    # Relationships
+    user: Mapped["User"] = relationship()

@@ -17,11 +17,18 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
+from filoutil.commands.session_refresh import (
+    refresh_session_command,
+    refresh_settings_callback,
+    refresh_settings_command,
+)
 from filoutil.commands.start import start
 from filoutil.db.postgres import SessionLocal, init_db
 from filoutil.db.status import get_admins, get_bot_status, update_heartbeat
 from filoutil.monitor.scheduler import monitoring_task
+from filoutil.session_refresh.scheduler import session_refresh_task
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -96,8 +103,13 @@ def build_app(token: str) -> Application:
     request = HTTPXRequest(connect_timeout=20, read_timeout=20)
     app = ApplicationBuilder().token(token).request(request).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler(["monitor", "m"], monitor_command))
     app.add_handler(CallbackQueryHandler(monitor_callback, pattern="^mon:"))
+    app.add_handler(CommandHandler("refresh_session", refresh_session_command))
+    app.add_handler(CommandHandler("refresh_settings", refresh_settings_command))
+    app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
 
     # Generic message handler for text input (e.g. monitor edits)
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,6 +177,11 @@ def main() -> None:
         # Start monitoring service
         monitoring = asyncio.create_task(monitoring_task(app), name="monitoring_task")
 
+        # Start session refresh scheduler
+        session_refresh = asyncio.create_task(
+            session_refresh_task(app), name="session_refresh_task"
+        )
+
         # run_polling handles network errors during polling.
         # bootstrap_retries=-1 ensures it keeps trying to start even if network is down.
         await app.updater.start_polling(
@@ -183,9 +200,9 @@ def main() -> None:
             except Exception as e:
                 logging.error("Error updating status on shutdown: %s", e)
 
-            for t in (heartbeat, monitoring):
+            for t in (heartbeat, monitoring, session_refresh):
                 t.cancel()
-            for t in (heartbeat, monitoring):
+            for t in (heartbeat, monitoring, session_refresh):
                 try:
                     await t
                 except asyncio.CancelledError:

@@ -38,6 +38,7 @@ def get_monitor_list_keyboard(monitors):
 
     keyboard.append([InlineKeyboardButton("➕ Add Monitor", callback_data="mon:add_start")])
     keyboard.append([InlineKeyboardButton("🔄 Refresh List", callback_data="mon:list")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")])
     return InlineKeyboardMarkup(keyboard)
 
 

@@ -1,6 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from filoutil.commands.menu import menu_command
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.users import ensure_user_by_telegram_id, get_user_by_telegram_id
 
@@ -28,4 +29,5 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-    await update.message.reply_text("Hello! ✅")
+    # Show the main menu
+    await menu_command(update, context)
