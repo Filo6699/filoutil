@@ -24,3 +24,6 @@ def ensure_user_by_telegram_id(db: Session, telegram_id: int, username: str | No
     db.commit()
     db.refresh(user)
     return user
+
+
+1 + 1
