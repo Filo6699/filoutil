@@ -18,13 +18,35 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python bot.py
+python -m filoutil.app
 ```
 
-Then open your bot chat in Telegram and try:
-- `/start`
-- `/hello`
-- send any text message (it will echo)
+## Production (single VPS, all Docker)
+
+### 1) Create your `.env`
+
+Copy `env.example` to `.env` and fill in your bot token:
+
+```bash
+cp env.example .env
+```
+
+Required:
+- `TELEGRAM_BOT_TOKEN`
+- `DATABASE_URL` (default for compose: `postgresql://postgres:postgres@db:5432/filoutil`)
+
+### 2) Start
+
+```bash
+docker compose up -d --build
+```
+
+### 3) Logs / status
+
+```bash
+docker compose ps
+docker compose logs -f bot
+```
 
 ## Development
 

@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    # Default to a local postgres if not specified, or raise error in production
+    env = os.getenv("ENV", "").lower()
+    if env in {"prod", "production"}:
+        raise RuntimeError(
+            "Missing DATABASE_URL in production. Set DATABASE_URL (e.g. "
+            "'postgresql://postgres:postgres@db:5432/filoutil')."
+        )
+    # Development default: local compose port-forward
     DATABASE_URL = "postgresql://postgres:postgres@localhost:5001/filoutil"
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

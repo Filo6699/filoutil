@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from filoutil.auth import ensure_user_and_check_whitelisted
@@ -157,6 +158,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     with SessionLocal() as db:
         if action == "list":
+            # Clear any adding/editing state when going back to list
+            context.user_data.pop("adding_monitor", None)
+            context.user_data.pop("adding_monitor_step", None)
+            context.user_data.pop("new_monitor_name", None)
+            context.user_data.pop("editing_monitor_id", None)
+            context.user_data.pop("editing_field", None)
+
             monitors = get_all_monitors(db)
             text = "📋 *Service Monitors:*"
             reply_markup = get_monitor_list_keyboard(monitors)
@@ -170,9 +178,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     parse_mode="Markdown",
                 )
             else:
-                await query.edit_message_text(
-                    text, reply_markup=reply_markup, parse_mode="Markdown"
-                )
+                try:
+                    await query.edit_message_text(
+                        text, reply_markup=reply_markup, parse_mode="Markdown"
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
 
         elif action == "view":
             m_id = int(data[2])
@@ -184,7 +196,11 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         chat_id=query.message.chat_id, text="Monitor not found."
                     )
                 else:
-                    await query.edit_message_text("Monitor not found.")
+                    try:
+                        await query.edit_message_text("Monitor not found.")
+                    except BadRequest as e:
+                        if "Message is not modified" not in str(e):
+                            raise
                 return
 
             recent = get_recent_check_runs(db, m_id, limit=1)
@@ -215,9 +231,15 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     parse_mode="Markdown",
                 )
             else:
-                await query.edit_message_text(
-                    text, reply_markup=get_monitor_details_keyboard(monitor), parse_mode="Markdown"
-                )
+                try:
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=get_monitor_details_keyboard(monitor),
+                        parse_mode="Markdown",
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
 
         elif action == "refresh":
             m_id = int(data[2])
@@ -226,9 +248,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 back_kb = InlineKeyboardMarkup(
                     [[InlineKeyboardButton("⬅️ Back", callback_data=f"mon:view:{m_id}")]]
                 )
-                await query.edit_message_text(
-                    f"⏳ Checking {monitor.name}...", reply_markup=back_kb
-                )
+                try:
+                    await query.edit_message_text(
+                        f"⏳ Checking {monitor.name}...", reply_markup=back_kb
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
                 await check_monitor(db, monitor)
                 # Re-trigger view
                 query.data = f"mon:view:{m_id}"
@@ -250,19 +276,31 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"mon:delete_final:{m_id}")],
                 [InlineKeyboardButton("❌ Cancel", callback_data=f"mon:view:{m_id}")],
             ]
-            await query.edit_message_text(
-                f"⚠️ Are you sure you want to delete *{monitor.name}*?",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown",
-            )
+            try:
+                await query.edit_message_text(
+                    f"⚠️ Are you sure you want to delete *{monitor.name}*?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown",
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
         elif action == "delete_final":
             m_id = int(data[2])
             delete_monitor(db, m_id)
-            await query.edit_message_text("✅ Monitor deleted.")
+            try:
+                await query.edit_message_text("✅ Monitor deleted.")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
             # Go back to list after a short delay or just show back button
             keyboard = [[InlineKeyboardButton("⬅️ Back to List", callback_data="mon:list")]]
-            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            try:
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
         elif action == "edit_menu":
             m_id = int(data[2])
@@ -270,11 +308,15 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if not monitor:
                 return
 
-            await query.edit_message_text(
-                f"📝 *Editing Monitor: {monitor.name}*\n" f"Choose a field to modify:",
-                reply_markup=get_monitor_edit_keyboard(monitor),
-                parse_mode="Markdown",
-            )
+            try:
+                await query.edit_message_text(
+                    f"📝 *Editing Monitor: {monitor.name}*\n" f"Choose a field to modify:",
+                    reply_markup=get_monitor_edit_keyboard(monitor),
+                    parse_mode="Markdown",
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
         elif action == "edit":
             m_id = int(data[2])
@@ -317,7 +359,11 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             back_kb = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("❌ Cancel", callback_data=f"mon:edit_menu:{m_id}")]]
             )
-            await query.edit_message_text(text, reply_markup=back_kb, parse_mode="Markdown")
+            try:
+                await query.edit_message_text(text, reply_markup=back_kb, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
         elif action == "stats":
             m_id = int(data[2])
@@ -411,9 +457,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await query.message.delete()
             else:
                 # Text message - show loading then send photo
-                await query.edit_message_text(
-                    f"📊 Generating charts for {monitor.name}...", reply_markup=stats_kb
-                )
+                try:
+                    await query.edit_message_text(
+                        f"📊 Generating charts for {monitor.name}...", reply_markup=stats_kb
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
                 await query.message.reply_photo(
                     photo=chart_buf,
                     caption=f"📊 *{monitor.name}* ({range_label}, {len(recent)} checks)",
@@ -438,15 +488,115 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 query.data = f"mon:stats:{m_id}:{new_range}"
                 await monitor_callback(update, context)
 
+        elif action == "add_start":
+            # Start the add monitor flow - prompt for name
+            context.user_data["adding_monitor"] = True
+            context.user_data["adding_monitor_step"] = "name"
+
+            text = (
+                "➕ *Add New Monitor*\n\n"
+                "Please send the monitor *name* now.\n\n"
+                "Example: `My Website`"
+            )
+
+            cancel_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Cancel", callback_data="mon:list")]]
+            )
+
+            if query.message.photo:
+                await query.message.delete()
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=text,
+                    reply_markup=cancel_kb,
+                    parse_mode="Markdown",
+                )
+            else:
+                try:
+                    await query.edit_message_text(
+                        text, reply_markup=cancel_kb, parse_mode="Markdown"
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
+
 
 async def handle_monitor_edit_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
-    Handles text input when a user is editing a monitor field.
+    Handles text input when a user is editing a monitor field or adding a new monitor.
     Returns True if the message was handled, False otherwise.
     """
     if not update.message or not update.message.text:
         return False
 
+    # Check if user is adding a monitor
+    if context.user_data.get("adding_monitor"):
+        step = context.user_data.get("adding_monitor_step")
+        text_input = update.message.text.strip()
+
+        if step == "name":
+            # Store the name and prompt for URL
+            context.user_data["new_monitor_name"] = text_input
+            context.user_data["adding_monitor_step"] = "url"
+
+            text = (
+                f"✅ Name set: `{text_input}`\n\n"
+                "Now please send the monitor *URL*.\n\n"
+                "Example: `https://example.com`"
+            )
+
+            cancel_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Cancel", callback_data="mon:list")]]
+            )
+
+            await update.message.reply_text(text, reply_markup=cancel_kb, parse_mode="Markdown")
+            return True
+
+        elif step == "url":
+            # Validate URL and create monitor
+            url = text_input
+            name = context.user_data.get("new_monitor_name")
+
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                await update.message.reply_text(
+                    "❌ Invalid URL. Please provide a URL starting with `http://` or `https://`.\n"
+                    "Please try again or cancel.",
+                    parse_mode="Markdown",
+                )
+                return True
+
+            try:
+                with SessionLocal() as db:
+                    monitor = create_monitor(db, name=name, url=url)
+                    await update.message.reply_text(
+                        f"✅ Monitor *{monitor.name}* created successfully!",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(
+                            [
+                                [
+                                    InlineKeyboardButton(
+                                        "👁️ View Monitor", callback_data=f"mon:view:{monitor.id}"
+                                    ),
+                                    InlineKeyboardButton("📋 List", callback_data="mon:list"),
+                                ]
+                            ]
+                        ),
+                    )
+            except Exception as e:
+                logger.error(f"Error creating monitor: {e}")
+                await update.message.reply_text(
+                    f"❌ Error creating monitor: {str(e)}\nPlease try again or cancel."
+                )
+                return True
+
+            # Clear adding state
+            del context.user_data["adding_monitor"]
+            del context.user_data["adding_monitor_step"]
+            del context.user_data["new_monitor_name"]
+            return True
+
+    # Original edit monitor flow
     m_id = context.user_data.get("editing_monitor_id")
     field = context.user_data.get("editing_field")
 
