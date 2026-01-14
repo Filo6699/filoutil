@@ -1,5 +1,6 @@
 services:
   db:
+    container_name: filoutil-db
     image: postgres:16-alpine
     restart: always
     environment:
@@ -10,6 +11,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   bot:
+    container_name: filoutil-bot
     build: .
     restart: always
     env_file:
