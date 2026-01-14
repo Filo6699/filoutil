@@ -442,9 +442,14 @@ def _draw_mini_monitor_chart(draw, x, y, width, height, data):
     seg_w = inner_w / num_runs
     for i, r in enumerate(runs):
         color = COLORS["success"] if r.is_up else COLORS["error"]
-        draw.rectangle(
-            [inner_x + i * seg_w, bar_y, inner_x + (i + 1) * seg_w - 1, bar_y + bar_h], fill=color
-        )
+        x0 = inner_x + i * seg_w
+        x1 = inner_x + (i + 1) * seg_w
+        # Ensure at least 1 pixel gap between segments, but x1 must be >= x0
+        if i < num_runs - 1:
+            x1 = max(x0 + 1, x1 - 1)  # Leave 1px gap, but ensure valid rectangle
+        else:
+            x1 = max(x0 + 1, x1)  # Last segment goes to edge, but ensure valid rectangle
+        draw.rectangle([x0, bar_y, x1, bar_y + bar_h], fill=color)
 
 
 def _generate_empty_dashboard() -> io.BytesIO:
