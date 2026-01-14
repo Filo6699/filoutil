@@ -211,3 +211,7 @@ def main() -> None:
         except Exception as db_e:
             logging.error(f"Error logging crash to DB: {db_e}")
         raise
+
+
+if __name__ == "__main__":
+    main()
