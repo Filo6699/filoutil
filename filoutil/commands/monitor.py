@@ -196,13 +196,31 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text(text, parse_mode="Markdown")
             return
 
+        # Get user's default time range
+        user = get_user_by_telegram_id(db, update.message.from_user.id)
+        default_range = (
+            user.settings.get("default_time_range", "24h") if user and user.settings else "24h"
+        )
+
         # Show dashboard by default
         status_msg = await update.message.reply_text("📊 Generating dashboard...")
 
         monitors_data = []
         for m in monitors:
-            recent = get_check_runs_by_time_range(db, m.id, hours=24)
-            monitors_data.append({"name": m.name, "recent_runs": recent, "time_range": "24h"})
+            # Fetch data based on user's default time range
+            if default_range == "1h":
+                recent = get_check_runs_by_time_range(db, m.id, hours=1)
+            elif default_range == "6h":
+                recent = get_check_runs_by_time_range(db, m.id, hours=6)
+            elif default_range == "24h":
+                recent = get_check_runs_by_time_range(db, m.id, hours=24)
+            elif default_range == "1month":
+                recent = get_check_runs_by_time_range(db, m.id, days=30)
+            else:
+                recent = get_check_runs_by_time_range(db, m.id, hours=24)
+            monitors_data.append(
+                {"name": m.name, "recent_runs": recent, "time_range": default_range}
+            )
 
         chart_buf = await generate_dashboard_chart(monitors_data)
 
@@ -215,7 +233,7 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         await update.message.reply_photo(
             photo=chart_buf,
-            caption="📊 *Service Dashboard (24h)*",
+            caption=f"📊 *Service Dashboard ({default_range})*",
             reply_markup=reply_markup,
             parse_mode="Markdown",
         )
