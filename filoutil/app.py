@@ -19,6 +19,11 @@ from telegram.request import HTTPXRequest
 
 from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
+from filoutil.commands.reminder import (
+    handle_reminder_settings_input,
+    reminder_callback,
+    reminder_settings_command,
+)
 from filoutil.commands.session_refresh import (
     refresh_session_command,
     refresh_settings_callback,
@@ -27,7 +32,9 @@ from filoutil.commands.session_refresh import (
 from filoutil.commands.start import start
 from filoutil.db.postgres import SessionLocal, init_db
 from filoutil.db.status import get_admins, get_bot_status, update_heartbeat
+from filoutil.db.users import update_user_activity
 from filoutil.monitor.scheduler import monitoring_task
+from filoutil.session_refresh.reminder import reminder_task
 from filoutil.session_refresh.scheduler import session_refresh_task
 
 
@@ -108,12 +115,21 @@ def build_app(token: str) -> Application:
     app.add_handler(CallbackQueryHandler(monitor_callback, pattern="^mon:"))
     app.add_handler(CommandHandler("refresh_session", refresh_session_command))
     app.add_handler(CommandHandler("refresh_settings", refresh_settings_command))
+    app.add_handler(CommandHandler("reminder_settings", reminder_settings_command))
     app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
+    app.add_handler(CallbackQueryHandler(reminder_callback, pattern="^reminder:"))
 
-    # Generic message handler for text input (e.g. monitor edits)
+    # Generic message handler for text input (e.g. monitor edits, reminder settings)
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Track user activity
+        if update.message and update.message.from_user:
+            with SessionLocal() as db:
+                update_user_activity(db, update.message.from_user.id)
+
         if await handle_monitor_edit_input(update, context):
+            return
+        if await handle_reminder_settings_input(update, context):
             return
         # If not handled by anything else, we could just ignore or log
         pass
@@ -182,6 +198,9 @@ def main() -> None:
             session_refresh_task(app), name="session_refresh_task"
         )
 
+        # Start reminder task
+        reminder = asyncio.create_task(reminder_task(app), name="reminder_task")
+
         # run_polling handles network errors during polling.
         # bootstrap_retries=-1 ensures it keeps trying to start even if network is down.
         await app.updater.start_polling(
@@ -200,9 +219,9 @@ def main() -> None:
             except Exception as e:
                 logging.error("Error updating status on shutdown: %s", e)
 
-            for t in (heartbeat, monitoring, session_refresh):
+            for t in (heartbeat, monitoring, session_refresh, reminder):
                 t.cancel()
-            for t in (heartbeat, monitoring, session_refresh):
+            for t in (heartbeat, monitoring, session_refresh, reminder):
                 try:
                     await t
                 except asyncio.CancelledError:

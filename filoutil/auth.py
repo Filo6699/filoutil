@@ -29,6 +29,12 @@ async def ensure_user_and_check_whitelisted(
         ensure_user_by_telegram_id(db, telegram_id, username)
         user = get_user_by_telegram_id(db, telegram_id)
 
+        # Track activity
+        if user:
+            from filoutil.db.users import update_user_activity
+
+            update_user_activity(db, telegram_id)
+
         if not user:
             await update.message.reply_text(
                 "Something went wrong while looking up your user record. Please try again."
