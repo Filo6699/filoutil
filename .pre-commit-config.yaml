@@ -18,3 +18,12 @@ repos:
     hooks:
       - id: black
         language_version: python3
+
+  - repo: local
+    hooks:
+      - id: stage-formatted-files
+        name: Stage files modified by formatters
+        entry: bash -c 'git diff --cached --name-only --diff-filter=ACM 2>/dev/null | xargs -r -I {} git add {} 2>/dev/null || true; exit 0'
+        language: system
+        pass_filenames: false
+        always_run: true
