@@ -23,9 +23,6 @@ DEFAULT_NOTIFICATION_SETTINGS = {
     "send_immediately": True,
     "filter_event_types": [],  # Empty = all event types
     "filter_components": [],  # Empty = all components
-    "only_unread": False,  # Send only unread notifications
-    "quiet_hours_start": None,  # HH:MM format, None = disabled
-    "quiet_hours_end": None,  # HH:MM format, None = disabled
     "max_notifications_per_batch": 5,  # Max notifications to send at once
     "word_blacklist": [],  # List of words to filter out (case-insensitive)
     "notifications_per_page": 10,  # Number of notifications per page in list view
@@ -77,17 +74,6 @@ def get_notification_settings_keyboard(settings: dict) -> InlineKeyboardMarkup:
         ]
     )
 
-    # Only Unread
-    only_unread_icon = "✅" if settings.get("only_unread", False) else "❌"
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                f"{only_unread_icon} Only Unread: {'Yes' if settings.get('only_unread', False) else 'No'}",
-                callback_data="notif_settings:toggle:only_unread",
-            )
-        ]
-    )
-
     # Max Notifications Per Batch
     max_batch = settings.get("max_notifications_per_batch", 5)
     keyboard.append(
@@ -122,18 +108,6 @@ def get_notification_settings_keyboard(settings: dict) -> InlineKeyboardMarkup:
     # Filter Settings
     keyboard.append(
         [InlineKeyboardButton("🔍 Filter Settings", callback_data="notif_settings:filter:menu")]
-    )
-
-    # Quiet Hours
-    quiet_start = settings.get("quiet_hours_start")
-    quiet_end = settings.get("quiet_hours_end")
-    quiet_status = f"{quiet_start}-{quiet_end}" if quiet_start and quiet_end else "Disabled"
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                f"🌙 Quiet Hours: {quiet_status}", callback_data="notif_settings:quiet_hours:menu"
-            )
-        ]
     )
 
     keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")])
@@ -358,7 +332,6 @@ async def show_notification_settings(
         f"*Status:* {enabled_status}\n"
         f"*Check Interval:* {minutes}m ({check_interval}s)\n"
         f"*Send Immediately:* {'Yes' if settings.get('send_immediately', True) else 'No'}\n"
-        f"*Only Unread:* {'Yes' if settings.get('only_unread', False) else 'No'}\n"
         f"*Max Per Batch:* {settings.get('max_notifications_per_batch', 5)}\n"
         f"*Notifications Per Page:* {per_page}\n"
         f"*Word Blacklist:* {blacklist_count} word(s)\n\n"
@@ -535,10 +508,6 @@ async def notification_settings_callback(
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
-
-        elif action == "quiet_hours":
-            # TODO: Implement quiet hours UI
-            await query.answer("Quiet hours settings coming soon!", show_alert=True)
 
         elif action == "main":
             await show_notification_settings(query, context, settings)

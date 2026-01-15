@@ -124,7 +124,7 @@ def build_app(token: str) -> Application:
     app.add_handler(CommandHandler("refresh_session", refresh_session_command))
     app.add_handler(CommandHandler("refresh_settings", refresh_settings_command))
     app.add_handler(CommandHandler("reminder_settings", reminder_settings_command))
-    app.add_handler(CommandHandler("notifications", notifications_command))
+    app.add_handler(CommandHandler(["notifications", "n"], notifications_command))
     app.add_handler(CommandHandler("notification_settings", notification_settings_command))
     app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
