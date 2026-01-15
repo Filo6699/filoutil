@@ -122,6 +122,9 @@ class SessionRefresh(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     sesskey: Mapped[str] = mapped_column(String)
     moodleSession: Mapped[str] = mapped_column(String)
+    moodle_user_id: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )  # Moodle's user ID (useridto)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
@@ -129,6 +132,48 @@ class SessionRefresh(Base):
     refresh_interval_s: Mapped[int] = mapped_column(Integer, default=300)
     last_reminder_sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     reminder_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    user: Mapped["User"] = relationship()
+
+
+class MoodleNotification(Base):
+    __tablename__ = "moodle_notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notification_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True
+    )  # Moodle's notification ID
+    useridfrom: Mapped[int] = mapped_column(Integer, nullable=True)
+    useridto: Mapped[int] = mapped_column(Integer)
+    subject: Mapped[str] = mapped_column(String)
+    shortenedsubject: Mapped[str] = mapped_column(String, nullable=True)
+    text: Mapped[str] = mapped_column(String, nullable=True)
+    fullmessage: Mapped[str] = mapped_column(String, nullable=True)
+    fullmessageformat: Mapped[int] = mapped_column(Integer, nullable=True)
+    fullmessagehtml: Mapped[str] = mapped_column(String, nullable=True)
+    smallmessage: Mapped[str] = mapped_column(String, nullable=True)
+    contexturl: Mapped[str] = mapped_column(String, nullable=True)
+    contexturlname: Mapped[str] = mapped_column(String, nullable=True)
+    timecreated: Mapped[int] = mapped_column(BigInteger)  # Unix timestamp
+    timecreatedpretty: Mapped[str] = mapped_column(String, nullable=True)
+    timeread: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    iconurl: Mapped[str] = mapped_column(String, nullable=True)
+    component: Mapped[str] = mapped_column(String, nullable=True)
+    eventtype: Mapped[str] = mapped_column(String, nullable=True)
+    customdata: Mapped[dict] = mapped_column(JSON, nullable=True)
+
+    # Track if notification was sent to user
+    sent_to_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
     # Relationships
     user: Mapped["User"] = relationship()
