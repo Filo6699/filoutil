@@ -64,6 +64,11 @@ def run_migrations():
                     text("ALTER TABLE session_refresh ADD COLUMN reminder_due_at TIMESTAMP")
                 )
             logger.info("Migration completed: added 'reminder_due_at' column.")
+        if "moodle_user_id" not in columns:
+            logger.info("Adding missing column 'moodle_user_id' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE session_refresh ADD COLUMN moodle_user_id INTEGER"))
+            logger.info("Migration completed: added 'moodle_user_id' column.")
 
 
 def init_db():

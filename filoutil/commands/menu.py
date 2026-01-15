@@ -21,6 +21,12 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⚙️ Refresh Settings", callback_data="menu:refresh_settings"),
         ],
         [
+            InlineKeyboardButton("🔔 Notifications", callback_data="menu:notifications"),
+            InlineKeyboardButton(
+                "⚙️ Notification Settings", callback_data="menu:notification_settings"
+            ),
+        ],
+        [
             InlineKeyboardButton("⏰ Reminder Settings", callback_data="menu:reminder_settings"),
         ],
         [InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")],
@@ -239,6 +245,40 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if "Message is not modified" not in str(e):
                     raise
 
+    elif action == "notifications":
+        # Show notifications list
+        from filoutil.commands.notifications import show_notifications_list
+
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            await show_notifications_list(db, user.id, query, context, page=0, filter_type="all")
+
+    elif action == "notification_settings":
+        # Show notification settings
+        from filoutil.commands.notification_settings import (
+            get_user_notification_settings,
+            show_notification_settings,
+        )
+
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            settings = get_user_notification_settings(db, user.id)
+            await show_notification_settings(query, context, settings)
+
     elif action == "help":
         text = (
             "ℹ️ *Help*\n\n"
@@ -247,11 +287,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/monitor` or `/m` - Manage service monitors\n"
             "• `/refresh_session` - Start LMS session refresh\n"
             "• `/refresh_settings` - Configure refresh interval\n"
+            "• `/notifications` - View Moodle notifications\n"
+            "• `/notification_settings` - Configure notification settings\n"
             "• `/reminder_settings` - Configure reminder settings\n\n"
             "*Features:*\n\n"
             "📊 *Monitors* - Monitor your services and websites\n"
             "🔄 *Session Refresh* - Keep your LMS session alive automatically\n"
-            "⚙️ *Settings* - Configure refresh intervals\n"
+            "🔔 *Notifications* - View and manage Moodle notifications\n"
+            "⚙️ *Settings* - Configure refresh intervals and notifications\n"
             "⏰ *Reminders* - Get notified about active sessions\n\n"
             "Use the menu buttons to navigate!"
         )
