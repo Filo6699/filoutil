@@ -258,7 +258,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     pass
                 return
 
-            await show_notifications_list(db, user.id, query, context, page=0, filter_type="all")
+            await show_notifications_list(db, user.id, query, context, page=0)
 
     elif action == "notification_settings":
         # Show notification settings

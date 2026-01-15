@@ -23,6 +23,86 @@ DEFAULT_NOTIFICATION_LIMIT = 20
 DEFAULT_NOTIFICATION_OFFSET = 0
 
 
+async def mark_all_notifications_as_read(
+    sesskey: str, moodleSession: str, useridto: int, timecreatedto: int | None = None
+) -> tuple[bool, str | None]:
+    """
+    Mark all notifications as read in Moodle.
+
+    Args:
+        sesskey: Moodle session key
+        moodleSession: Moodle session cookie value
+        useridto: User ID
+        timecreatedto: Optional timestamp - mark notifications up to this time as read
+
+    Returns:
+        Tuple of (success: bool, error_message: str | None)
+    """
+    url = f"{LMS_BASE_URL}{LMS_ENDPOINT}"
+    params = {"sesskey": sesskey, "info": "core_message_mark_all_notifications_as_read"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": LMS_BASE_URL,
+        "Referer": f"{LMS_BASE_URL}/",
+    }
+    cookies = {"MoodleSession": moodleSession}
+
+    args = {"useridto": str(useridto)}
+    if timecreatedto:
+        args["timecreatedto"] = timecreatedto
+
+    payload = [
+        {
+            "index": 0,
+            "methodname": "core_message_mark_all_notifications_as_read",
+            "args": args,
+        }
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.post(
+                url, params=params, headers=headers, cookies=cookies, json=payload
+            )
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    logger.debug(f"Moodle mark all as read response: {data}")
+
+                    if isinstance(data, list) and len(data) > 0:
+                        item = data[0]
+                        if "error" in item:
+                            error_val = item["error"]
+                            if error_val is False or error_val is None:
+                                return True, None
+                            elif error_val is True:
+                                error_msg = item.get("message", "Unknown error")
+                                return False, f"Moodle error: {error_msg}"
+                            elif isinstance(error_val, dict):
+                                error_msg = error_val.get("message", str(error_val))
+                                return False, f"Moodle error: {error_msg}"
+                            else:
+                                return False, f"Moodle error: {error_val}"
+                    return False, "Invalid response format"
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to parse mark all as read response JSON: {e}, response text: {response.text[:500]}"
+                    )
+                    return False, f"Failed to parse response: {str(e)}"
+            else:
+                error_text = response.text[:200] if response.text else "No response body"
+                logger.error(f"Moodle returned status {response.status_code}: {error_text}")
+                return False, f"HTTP {response.status_code}: {error_text}"
+
+    except httpx.RequestError as e:
+        return False, f"Request failed: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+
 async def fetch_notifications(
     sesskey: str,
     moodleSession: str,
@@ -317,6 +397,24 @@ async def process_notifications_for_user(
             logger.debug(f"No notifications found for user {user_id}")
             return
 
+        # Mark all notifications as read in Moodle
+        # Use the latest notification's timestamp as timecreatedto
+        latest_timestamp = max(
+            (n.get("timecreated", 0) for n in notifications if n.get("timecreated")), default=None
+        )
+
+        mark_success, mark_error = await mark_all_notifications_as_read(
+            session_refresh.sesskey,
+            session_refresh.moodleSession,
+            moodle_user_id,
+            timecreatedto=latest_timestamp,
+        )
+
+        if mark_success:
+            logger.debug(f"Marked all notifications as read for user {user_id}")
+        else:
+            logger.warning(f"Failed to mark notifications as read for user {user_id}: {mark_error}")
+
         # Store new notifications and send them
         with SessionLocal() as db:
             user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
@@ -343,10 +441,6 @@ async def process_notifications_for_user(
             word_blacklist = settings.get("word_blacklist", [])
 
             for notification in new_notifications:
-                # Filter by only_unread setting
-                if settings.get("only_unread", False) and notification.read:
-                    continue
-
                 # Filter by event type
                 filter_event_types = settings.get("filter_event_types", [])
                 if filter_event_types and notification.eventtype not in filter_event_types:
