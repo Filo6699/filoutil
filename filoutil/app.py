@@ -18,19 +18,18 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from filoutil.commands.admin import db_query, shell_command
+from filoutil.commands.admin_users import admin_users_callback, admin_users_command
 from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
+from filoutil.commands.moodle.add_session import moodle_add_session_command
+from filoutil.commands.moodle.menu import moodle_callback, moodle_menu_command
+from filoutil.commands.moodle.sessions import sessions_callback
 from filoutil.commands.notification_settings import (
     handle_blacklist_word_input,
     notification_settings_callback,
     notification_settings_command,
 )
 from filoutil.commands.notifications import notifications_callback, notifications_command
-from filoutil.commands.reminder import (
-    handle_reminder_settings_input,
-    reminder_callback,
-    reminder_settings_command,
-)
 from filoutil.commands.session_refresh import (
     refresh_session_command,
     refresh_settings_callback,
@@ -42,7 +41,6 @@ from filoutil.db.status import get_admins, get_bot_status, update_heartbeat
 from filoutil.db.users import update_user_activity
 from filoutil.monitor.scheduler import monitoring_task
 from filoutil.moodle_cabinet.scheduler import notifications_task
-from filoutil.session_refresh.reminder import reminder_task
 from filoutil.session_refresh.scheduler import session_refresh_task
 
 
@@ -80,8 +78,8 @@ async def notify_admins_online(app: Application):
             reason = status_rec.exit_reason or "Unknown (likely heartbeat timeout)"
             status_val = status_rec.status
 
-            # If the bot downtime was less than 5 minutes and the reason is Signal 2 then don't notify the admins
-            if downtime.total_seconds() < 300 and reason == "Signal 2":
+            # If the bot downtime was less than 5 minutes and the reason is Signal 15 then don't notify the admins
+            if downtime.total_seconds() < 300 and reason == "Signal 15":
                 update_heartbeat(db, status="online", exit_reason=None)
                 return
 
@@ -123,12 +121,15 @@ def build_app(token: str) -> Application:
     app.add_handler(CallbackQueryHandler(monitor_callback, pattern="^mon:"))
     app.add_handler(CommandHandler("refresh_session", refresh_session_command))
     app.add_handler(CommandHandler("refresh_settings", refresh_settings_command))
-    app.add_handler(CommandHandler("reminder_settings", reminder_settings_command))
     app.add_handler(CommandHandler(["notifications", "n"], notifications_command))
     app.add_handler(CommandHandler("notification_settings", notification_settings_command))
+    # Moodle commands
+    app.add_handler(CommandHandler("moodle", moodle_menu_command))
+    app.add_handler(CommandHandler("moodle_add", moodle_add_session_command))
     app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
-    app.add_handler(CallbackQueryHandler(reminder_callback, pattern="^reminder:"))
+    app.add_handler(CallbackQueryHandler(moodle_callback, pattern="^moodle:"))
+    app.add_handler(CallbackQueryHandler(sessions_callback, pattern="^moodle:sessions:"))
     app.add_handler(CallbackQueryHandler(notifications_callback, pattern="^notif:"))
     app.add_handler(
         CallbackQueryHandler(notification_settings_callback, pattern="^notif_settings:")
@@ -136,8 +137,10 @@ def build_app(token: str) -> Application:
     # Admin commands
     app.add_handler(CommandHandler("shell", shell_command))
     app.add_handler(CommandHandler("db", db_query))
+    app.add_handler(CommandHandler("admin", admin_users_command))
+    app.add_handler(CallbackQueryHandler(admin_users_callback, pattern="^admin_users:"))
 
-    # Generic message handler for text input (e.g. monitor edits, reminder settings)
+    # Generic message handler for text input (e.g. monitor edits)
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Track user activity
         if update.message and update.message.from_user:
@@ -146,9 +149,12 @@ def build_app(token: str) -> Application:
 
         if await handle_monitor_edit_input(update, context):
             return
-        if await handle_reminder_settings_input(update, context):
-            return
         if await handle_blacklist_word_input(update, context):
+            return
+        # Handle session name editing
+        from filoutil.commands.moodle.sessions import handle_session_name_input
+
+        if await handle_session_name_input(update, context):
             return
         # If not handled by anything else, we could just ignore or log
         pass
@@ -217,9 +223,6 @@ def main() -> None:
             session_refresh_task(app), name="session_refresh_task"
         )
 
-        # Start reminder task
-        reminder = asyncio.create_task(reminder_task(app), name="reminder_task")
-
         # Start Moodle notifications task
         moodle_notifications = asyncio.create_task(
             notifications_task(app), name="moodle_notifications_task"
@@ -243,9 +246,9 @@ def main() -> None:
             except Exception as e:
                 logging.error("Error updating status on shutdown: %s", e)
 
-            for t in (heartbeat, monitoring, session_refresh, reminder, moodle_notifications):
+            for t in (heartbeat, monitoring, session_refresh, moodle_notifications):
                 t.cancel()
-            for t in (heartbeat, monitoring, session_refresh, reminder, moodle_notifications):
+            for t in (heartbeat, monitoring, session_refresh, moodle_notifications):
                 try:
                     await t
                 except asyncio.CancelledError:

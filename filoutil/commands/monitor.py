@@ -6,7 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from filoutil.auth import ensure_user_and_check_whitelisted
+from filoutil.auth import require_module_permission
 from filoutil.db.monitors import (
     create_monitor,
     delete_monitor,
@@ -172,7 +172,7 @@ async def _show_edit_menu(db, query, m_id):
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Entry point for /monitor command."""
-    if not await ensure_user_and_check_whitelisted(update, context):
+    if not await require_module_permission(update, context, "monitoring"):
         return
 
     # Check for arguments (simple CLI-style add)
@@ -243,6 +243,11 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles all monitoring related callbacks."""
     query = update.callback_query
+
+    # Check permission
+    if not await require_module_permission(update, context, "monitoring"):
+        return
+
     await query.answer()
 
     data = query.data.split(":")

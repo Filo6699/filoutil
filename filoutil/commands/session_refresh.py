@@ -1,12 +1,11 @@
 import json
 import logging
-from datetime import datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from filoutil.auth import ensure_user_and_check_whitelisted
+from filoutil.auth import require_module_permission
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.session_refresh import (
     create_session_refresh,
@@ -49,7 +48,7 @@ def get_settings_keyboard(current_interval: int) -> InlineKeyboardMarkup:
 
 async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /refresh_session command with JSON input."""
-    if not await ensure_user_and_check_whitelisted(update, context):
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     if not update.message or not update.message.text:
@@ -92,34 +91,22 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ `sesskey` and `moodleSession` cannot be empty.")
         return
 
-    # Check for existing active session
     with SessionLocal() as db:
         user = get_user_by_telegram_id(db, update.message.from_user.id)
         if not user:
             await update.message.reply_text("❌ User not found.")
             return
 
-        active_session = get_active_session_refresh(db, user.id)
-        if active_session:
-            await update.message.reply_text(
-                "❌ You already have an active session refresh running. "
-                "Please wait for it to complete or stop it first."
-            )
-            return
-
         # Get user's refresh interval setting
         refresh_interval = get_user_refresh_interval(db, user.id)
 
+        # Extract optional name from data
+        session_name = data.get("name")
+
         # Create session refresh job
         session_refresh = create_session_refresh(
-            db, user.id, sesskey, moodleSession, refresh_interval
+            db, user.id, sesskey, moodleSession, refresh_interval, name=session_name
         )
-
-        # Set default reminder due date (1 day from now)
-        from filoutil.db.session_refresh import update_reminder_due_at
-
-        reminder_due_at = datetime.utcnow() + timedelta(days=1)
-        update_reminder_due_at(db, session_refresh.id, reminder_due_at)
 
         # Don't start the task here - let the scheduler pick it up to avoid duplicates
         # The scheduler will detect the new active session and start the task
@@ -139,7 +126,7 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
 
 async def refresh_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /refresh_settings command to show settings menu."""
-    if not await ensure_user_and_check_whitelisted(update, context):
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     with SessionLocal() as db:
@@ -166,6 +153,10 @@ async def refresh_settings_callback(update: Update, context: ContextTypes.DEFAUL
     """Handle callback queries for refresh settings."""
     query = update.callback_query
     if not query:
+        return
+
+    # Check permission
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     await query.answer()

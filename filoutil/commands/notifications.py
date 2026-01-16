@@ -8,7 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from filoutil.auth import ensure_user_and_check_whitelisted
+from filoutil.auth import require_module_permission
 from filoutil.commands.notification_settings import get_user_notification_settings
 from filoutil.db.models import MoodleNotification
 from filoutil.db.moodle_notifications import get_notification_by_moodle_id, get_user_notifications
@@ -76,8 +76,9 @@ def get_notifications_keyboard(
             nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"notif:page:{page + 1}"))
         keyboard.append(nav_row)
 
-    # Back button
-    keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")])
+    # Back button - check if we're in moodle context
+    # For now, always go to moodle menu since notifications are moodle-related
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -86,14 +87,14 @@ def get_notification_detail_keyboard(notification_id: int, page: int) -> InlineK
     """Generate keyboard for notification detail view."""
     keyboard = [
         [InlineKeyboardButton("⬅️ Back to List", callback_data=f"notif:page:{page}")],
-        [InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")],
+        [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
 async def notifications_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /notifications command to show notifications list."""
-    if not await ensure_user_and_check_whitelisted(update, context):
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     with SessionLocal() as db:
@@ -216,6 +217,10 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
     """Handle callback queries for notifications."""
     query = update.callback_query
     if not query:
+        return
+
+    # Check permission
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     await query.answer()
