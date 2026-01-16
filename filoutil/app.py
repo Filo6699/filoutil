@@ -40,7 +40,7 @@ from filoutil.db.postgres import SessionLocal, init_db
 from filoutil.db.status import get_admins, get_bot_status, update_heartbeat
 from filoutil.db.users import update_user_activity
 from filoutil.monitor.scheduler import monitoring_task
-from filoutil.moodle_cabinet.scheduler import notifications_task
+from filoutil.moodle_cabinet.scheduler import course_watcher_task, notifications_task
 from filoutil.session_refresh.scheduler import session_refresh_task
 
 
@@ -173,8 +173,6 @@ def main() -> None:
         level=log_level,
     )
 
-    # Important for production: httpx logs include full URLs (Telegram bot token is in the URL).
-    # Default these libraries to WARNING unless explicitly overridden.
     httpx_level = os.getenv("HTTPX_LOG_LEVEL", "WARNING").upper()
     logging.getLogger("httpx").setLevel(httpx_level)
     logging.getLogger("httpcore").setLevel(httpx_level)
@@ -228,6 +226,9 @@ def main() -> None:
             notifications_task(app), name="moodle_notifications_task"
         )
 
+        # Start Moodle course watcher task
+        course_watcher = asyncio.create_task(course_watcher_task(app), name="course_watcher_task")
+
         # run_polling handles network errors during polling.
         # bootstrap_retries=-1 ensures it keeps trying to start even if network is down.
         await app.updater.start_polling(
@@ -246,9 +247,9 @@ def main() -> None:
             except Exception as e:
                 logging.error("Error updating status on shutdown: %s", e)
 
-            for t in (heartbeat, monitoring, session_refresh, moodle_notifications):
+            for t in (heartbeat, monitoring, session_refresh, moodle_notifications, course_watcher):
                 t.cancel()
-            for t in (heartbeat, monitoring, session_refresh, moodle_notifications):
+            for t in (heartbeat, monitoring, session_refresh, moodle_notifications, course_watcher):
                 try:
                     await t
                 except asyncio.CancelledError:

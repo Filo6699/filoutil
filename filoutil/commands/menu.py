@@ -24,9 +24,6 @@ def get_main_menu_keyboard(user_permissions: list[str] = None) -> InlineKeyboard
     if user_permissions and "moodle" in user_permissions:
         keyboard.append([InlineKeyboardButton("🎓 Moodle", callback_data="menu:moodle")])
 
-    # Always show help
-    keyboard.append([InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")])
-
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -269,35 +266,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
             settings = get_user_notification_settings(db, user.id)
             await show_notification_settings(query, context, settings)
-
-    elif action == "help":
-        text = (
-            "ℹ️ *Help*\n\n"
-            "*Available Commands:*\n\n"
-            "• `/menu` - Show main menu\n"
-            "• `/monitor` or `/m` - Manage service monitors\n"
-            "• `/moodle` - Open Moodle menu\n"
-            "• `/moodle_add` - Add a new Moodle session\n"
-            "• `/refresh_session` - Start LMS session refresh (legacy)\n"
-            "• `/refresh_settings` - Configure refresh interval\n"
-            "• `/notifications` - View Moodle notifications\n"
-            "• `/notification_settings` - Configure notification settings\n\n"
-            "*Features:*\n\n"
-            "📊 *Monitors* - Monitor your services and websites\n"
-            "🎓 *Moodle* - Manage multiple Moodle sessions (up to 2-3)\n"
-            "🔄 *Session Refresh* - Keep your LMS sessions alive automatically\n"
-            "🔔 *Notifications* - View and manage Moodle notifications\n"
-            "⚙️ *Settings* - Configure refresh intervals and notifications\n\n"
-            "Use the menu buttons to navigate!"
-        )
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")]]
-        )
-        try:
-            await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
-        except BadRequest as e:
-            if "Message is not modified" not in str(e):
-                raise
 
     elif action == "moodle":
         # Check permission

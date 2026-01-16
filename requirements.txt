@@ -6,3 +6,4 @@ psycopg2-binary
 httpx
 Pillow
 jsonschema
+beautifulsoup4
