@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -21,6 +31,11 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Relationships
+    permissions: Mapped[list["UserPermission"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
     def to_dict(self):
@@ -125,16 +140,32 @@ class SessionRefresh(Base):
     moodle_user_id: Mapped[int] = mapped_column(
         Integer, nullable=True
     )  # Moodle's user ID (useridto)
+    name: Mapped[str] = mapped_column(
+        String, nullable=True
+    )  # Optional name/description for the session
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="running")  # running, stopped, failed
     refresh_interval_s: Mapped[int] = mapped_column(Integer, default=300)
-    last_reminder_sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    reminder_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship()
+
+
+class UserPermission(Base):
+    __tablename__ = "user_permissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    module: Mapped[str] = mapped_column(String)  # "monitoring" or "moodle"
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    granted_by: Mapped[int] = mapped_column(BigInteger, nullable=True)  # admin telegram_id
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="permissions")
+
+    __table_args__ = (UniqueConstraint("user_id", "module", name="uq_user_module"),)
 
 
 class MoodleNotification(Base):

@@ -8,7 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from filoutil.auth import ensure_user_and_check_whitelisted
+from filoutil.auth import require_module_permission
 from filoutil.db.models import User
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.users import get_user_by_telegram_id
@@ -110,7 +110,7 @@ def get_notification_settings_keyboard(settings: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔍 Filter Settings", callback_data="notif_settings:filter:menu")]
     )
 
-    keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")])
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -304,7 +304,7 @@ def save_user_notification_settings(db, user_id: int, settings: dict) -> None:
 
 async def notification_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /notification_settings command."""
-    if not await ensure_user_and_check_whitelisted(update, context):
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     with SessionLocal() as db:
@@ -356,6 +356,10 @@ async def notification_settings_callback(
     """Handle callback queries for notification settings."""
     query = update.callback_query
     if not query:
+        return
+
+    # Check permission
+    if not await require_module_permission(update, context, "moodle"):
         return
 
     await query.answer()

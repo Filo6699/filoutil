@@ -12,25 +12,21 @@ from filoutil.db.users import get_user_by_telegram_id
 logger = logging.getLogger(__name__)
 
 
-def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Generate the main menu keyboard."""
-    keyboard = [
-        [InlineKeyboardButton("📊 Monitors", callback_data="menu:monitors")],
-        [
-            InlineKeyboardButton("🔄 Session Refresh", callback_data="menu:refresh_session"),
-            InlineKeyboardButton("⚙️ Refresh Settings", callback_data="menu:refresh_settings"),
-        ],
-        [
-            InlineKeyboardButton("🔔 Notifications", callback_data="menu:notifications"),
-            InlineKeyboardButton(
-                "⚙️ Notification Settings", callback_data="menu:notification_settings"
-            ),
-        ],
-        [
-            InlineKeyboardButton("⏰ Reminder Settings", callback_data="menu:reminder_settings"),
-        ],
-        [InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")],
-    ]
+def get_main_menu_keyboard(user_permissions: list[str] = None) -> InlineKeyboardMarkup:
+    """Generate the main menu keyboard based on user permissions."""
+    keyboard = []
+
+    # Add Monitors button only if user has monitoring permission
+    if user_permissions and "monitoring" in user_permissions:
+        keyboard.append([InlineKeyboardButton("📊 Monitors", callback_data="menu:monitors")])
+
+    # Add Moodle button only if user has moodle permission
+    if user_permissions and "moodle" in user_permissions:
+        keyboard.append([InlineKeyboardButton("🎓 Moodle", callback_data="menu:moodle")])
+
+    # Always show help
+    keyboard.append([InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")])
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -45,18 +41,29 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text("❌ User not found.")
             return
 
-        # Check if user has active session refresh
-        active_session = get_active_session_refresh(db, user.id)
-        session_status = "🟢 Active" if active_session else "⚪ Inactive"
+        # Get user permissions
+        from filoutil.db.permissions import get_user_permissions
 
-        text = (
-            f"🏠 *Main Menu*\n\n"
-            f"Welcome! Choose an option from the menu below.\n\n"
-            f"*Session Refresh Status:* {session_status}"
-        )
+        user_permissions = get_user_permissions(db, user.id)
+
+        # Check if user has active session refresh (only if has moodle permission)
+        if "moodle" in user_permissions:
+            from filoutil.db.session_refresh import get_active_sessions_for_user
+
+            active_sessions = get_active_sessions_for_user(db, user.id)
+            session_count = len(active_sessions)
+            session_status = f"{session_count} active" if session_count > 0 else "None"
+
+            text = (
+                f"🏠 *Main Menu*\n\n"
+                f"Welcome! Choose an option from the menu below.\n\n"
+                f"*Moodle Sessions:* {session_status}"
+            )
+        else:
+            text = f"🏠 *Main Menu*\n\n" f"Welcome! Choose an option from the menu below."
 
         await update.message.reply_text(
-            text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown"
+            text, reply_markup=get_main_menu_keyboard(user_permissions), parse_mode="Markdown"
         )
 
 
@@ -67,14 +74,26 @@ async def show_main_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not user:
             return
 
-        active_session = get_active_session_refresh(db, user.id)
-        session_status = "🟢 Active" if active_session else "⚪ Inactive"
+        # Get user permissions
+        from filoutil.db.permissions import get_user_permissions
 
-        text = (
-            f"🏠 *Main Menu*\n\n"
-            f"Welcome! Choose an option from the menu below.\n\n"
-            f"*Session Refresh Status:* {session_status}"
-        )
+        user_permissions = get_user_permissions(db, user.id)
+
+        # Check if user has active session refresh (only if has moodle permission)
+        if "moodle" in user_permissions:
+            from filoutil.db.session_refresh import get_active_sessions_for_user
+
+            active_sessions = get_active_sessions_for_user(db, user.id)
+            session_count = len(active_sessions)
+            session_status = f"{session_count} active" if session_count > 0 else "None"
+
+            text = (
+                f"🏠 *Main Menu*\n\n"
+                f"Welcome! Choose an option from the menu below.\n\n"
+                f"*Moodle Sessions:* {session_status}"
+            )
+        else:
+            text = f"🏠 *Main Menu*\n\n" f"Welcome! Choose an option from the menu below."
 
         try:
             if query.message.photo:
@@ -82,12 +101,14 @@ async def show_main_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
-                    reply_markup=get_main_menu_keyboard(),
+                    reply_markup=get_main_menu_keyboard(user_permissions),
                     parse_mode="Markdown",
                 )
             else:
                 await query.edit_message_text(
-                    text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown"
+                    text,
+                    reply_markup=get_main_menu_keyboard(user_permissions),
+                    parse_mode="Markdown",
                 )
         except BadRequest as e:
             if "Message is not modified" not in str(e):
@@ -105,7 +126,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     data = query.data.split(":")
     action = data[1]
 
+    # Get user permissions for gating actions
+    with SessionLocal() as db:
+        user = get_user_by_telegram_id(db, query.from_user.id)
+        if not user:
+            await query.answer("❌ User not found.", show_alert=True)
+            return
+
+        from filoutil.db.permissions import get_user_permissions
+
+        user_permissions = get_user_permissions(db, user.id)
+
     if action == "monitors":
+        # Check permission
+        if "monitoring" not in user_permissions:
+            await query.answer("❌ You don't have permission to access Monitors.", show_alert=True)
+            return
         # Show monitor list directly
         from filoutil.commands.monitor import get_monitor_list_keyboard
         from filoutil.db.monitors import get_all_monitors
@@ -200,51 +236,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if "Message is not modified" not in str(e):
                     raise
 
-    elif action == "reminder_settings":
-        # Show reminder settings directly
-        with SessionLocal() as db:
-            user = get_user_by_telegram_id(db, query.from_user.id)
-            if not user:
-                try:
-                    await query.edit_message_text("❌ User not found.")
-                except BadRequest:
-                    pass
-                return
-
-            settings = user.settings or {}
-            reset_time = settings.get("reminder_reset_time", "03:00")
-            timezone = settings.get("reminder_timezone", "UTC")
-
-            text = (
-                f"⏰ *Reminder Settings*\n\n"
-                f"*Reset time:* {reset_time}\n"
-                f"*Timezone:* {timezone}\n\n"
-                f"To configure, send:\n"
-                f"`/reminder_settings <HH:MM> <timezone>`\n\n"
-                f"Example: `/reminder_settings 03:00 Asia/Almaty`"
-            )
-
-            keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")]]
-            )
-
-            try:
-                if query.message.photo:
-                    await query.message.delete()
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=text,
-                        reply_markup=keyboard,
-                        parse_mode="Markdown",
-                    )
-                else:
-                    await query.edit_message_text(
-                        text, reply_markup=keyboard, parse_mode="Markdown"
-                    )
-            except BadRequest as e:
-                if "Message is not modified" not in str(e):
-                    raise
-
     elif action == "notifications":
         # Show notifications list
         from filoutil.commands.notifications import show_notifications_list
@@ -285,17 +276,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "*Available Commands:*\n\n"
             "• `/menu` - Show main menu\n"
             "• `/monitor` or `/m` - Manage service monitors\n"
-            "• `/refresh_session` - Start LMS session refresh\n"
+            "• `/moodle` - Open Moodle menu\n"
+            "• `/moodle_add` - Add a new Moodle session\n"
+            "• `/refresh_session` - Start LMS session refresh (legacy)\n"
             "• `/refresh_settings` - Configure refresh interval\n"
             "• `/notifications` - View Moodle notifications\n"
-            "• `/notification_settings` - Configure notification settings\n"
-            "• `/reminder_settings` - Configure reminder settings\n\n"
+            "• `/notification_settings` - Configure notification settings\n\n"
             "*Features:*\n\n"
             "📊 *Monitors* - Monitor your services and websites\n"
-            "🔄 *Session Refresh* - Keep your LMS session alive automatically\n"
+            "🎓 *Moodle* - Manage multiple Moodle sessions (up to 2-3)\n"
+            "🔄 *Session Refresh* - Keep your LMS sessions alive automatically\n"
             "🔔 *Notifications* - View and manage Moodle notifications\n"
-            "⚙️ *Settings* - Configure refresh intervals and notifications\n"
-            "⏰ *Reminders* - Get notified about active sessions\n\n"
+            "⚙️ *Settings* - Configure refresh intervals and notifications\n\n"
             "Use the menu buttons to navigate!"
         )
         keyboard = InlineKeyboardMarkup(
@@ -306,6 +298,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 raise
+
+    elif action == "moodle":
+        # Check permission
+        if "moodle" not in user_permissions:
+            await query.answer("❌ You don't have permission to access Moodle.", show_alert=True)
+            return
+
+        # Show Moodle menu
+        from filoutil.commands.moodle.menu import show_moodle_menu
+
+        await show_moodle_menu(query, context)
 
     elif action == "main":
         await show_main_menu(query, context)

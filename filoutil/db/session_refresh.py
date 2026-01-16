@@ -12,6 +12,7 @@ def create_session_refresh(
     sesskey: str,
     moodleSession: str,
     refresh_interval_s: int,
+    name: str | None = None,
 ) -> SessionRefresh:
     """Create a new session refresh job."""
     session_refresh = SessionRefresh(
@@ -20,6 +21,7 @@ def create_session_refresh(
         moodleSession=moodleSession,
         refresh_interval_s=refresh_interval_s,
         status="running",
+        name=name,
     )
     db.add(session_refresh)
     db.commit()
@@ -28,11 +30,35 @@ def create_session_refresh(
 
 
 def get_active_session_refresh(db: Session, user_id: int) -> SessionRefresh | None:
-    """Get the active (running) session refresh for a user."""
+    """Get the active (running) session refresh for a user.
+
+    DEPRECATED: Use get_active_sessions_for_user() to support multiple sessions.
+    This function returns only the first active session for backwards compatibility.
+    """
     return db.execute(
-        select(SessionRefresh).where(
-            SessionRefresh.user_id == user_id, SessionRefresh.status == "running"
+        select(SessionRefresh)
+        .where(SessionRefresh.user_id == user_id, SessionRefresh.status == "running")
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def get_active_sessions_for_user(db: Session, user_id: int) -> list[SessionRefresh]:
+    """Get all active (running) session refreshes for a user."""
+    return (
+        db.execute(
+            select(SessionRefresh)
+            .where(SessionRefresh.user_id == user_id, SessionRefresh.status == "running")
+            .order_by(SessionRefresh.started_at.desc())
         )
+        .scalars()
+        .all()
+    )
+
+
+def get_session_refresh_by_id(db: Session, session_id: int) -> SessionRefresh | None:
+    """Get a session refresh by its ID."""
+    return db.execute(
+        select(SessionRefresh).where(SessionRefresh.id == session_id)
     ).scalar_one_or_none()
 
 
@@ -74,30 +100,16 @@ def get_all_active_sessions(db: Session) -> list[SessionRefresh]:
     )
 
 
-def update_reminder_due_at(
-    db: Session, session_refresh_id: int, reminder_due_at: datetime
+def update_session_name(
+    db: Session, session_refresh_id: int, name: str | None
 ) -> SessionRefresh | None:
-    """Update the reminder due date for a session refresh."""
+    """Update the name for a session refresh."""
     session_refresh = db.execute(
         select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
     ).scalar_one_or_none()
 
     if session_refresh:
-        session_refresh.reminder_due_at = reminder_due_at
-        db.commit()
-        db.refresh(session_refresh)
-
-    return session_refresh
-
-
-def mark_reminder_sent(db: Session, session_refresh_id: int) -> SessionRefresh | None:
-    """Mark that a reminder was sent for a session refresh."""
-    session_refresh = db.execute(
-        select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
-    ).scalar_one_or_none()
-
-    if session_refresh:
-        session_refresh.last_reminder_sent_at = datetime.utcnow()
+        session_refresh.name = name
         db.commit()
         db.refresh(session_refresh)
 

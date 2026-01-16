@@ -47,28 +47,89 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE users ADD COLUMN last_activity_at TIMESTAMP"))
             logger.info("Migration completed: added 'last_activity_at' column.")
 
-    # Check if session_refresh table exists and add reminder columns
+    # Check if session_refresh table exists and add columns
     if "session_refresh" in inspector.get_table_names():
         columns = [col["name"] for col in inspector.get_columns("session_refresh")]
-        if "last_reminder_sent_at" not in columns:
-            logger.info("Adding missing column 'last_reminder_sent_at' to session_refresh table...")
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE session_refresh ADD COLUMN last_reminder_sent_at TIMESTAMP")
-                )
-            logger.info("Migration completed: added 'last_reminder_sent_at' column.")
-        if "reminder_due_at" not in columns:
-            logger.info("Adding missing column 'reminder_due_at' to session_refresh table...")
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE session_refresh ADD COLUMN reminder_due_at TIMESTAMP")
-                )
-            logger.info("Migration completed: added 'reminder_due_at' column.")
         if "moodle_user_id" not in columns:
             logger.info("Adding missing column 'moodle_user_id' to session_refresh table...")
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE session_refresh ADD COLUMN moodle_user_id INTEGER"))
             logger.info("Migration completed: added 'moodle_user_id' column.")
+        if "name" not in columns:
+            logger.info("Adding missing column 'name' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE session_refresh ADD COLUMN name VARCHAR"))
+            logger.info("Migration completed: added 'name' column.")
+
+    # Create user_permissions table if it doesn't exist (backwards compatible migration)
+    # Note: Base.metadata.create_all() is called before this, so if SQLAlchemy created it,
+    # this migration will skip. If it doesn't exist, we create it manually.
+    table_names = inspector.get_table_names()
+    if "user_permissions" not in table_names:
+        logger.info("Creating 'user_permissions' table...")
+        with engine.begin() as conn:
+            # Create the table with all columns
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE user_permissions (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        module VARCHAR NOT NULL,
+                        granted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        granted_by BIGINT,
+                        CONSTRAINT fk_user_permissions_user_id
+                            FOREIGN KEY (user_id)
+                            REFERENCES users(id)
+                            ON DELETE CASCADE,
+                        CONSTRAINT uq_user_module
+                            UNIQUE (user_id, module)
+                    )
+                    """
+                )
+            )
+            # Create index on user_id for faster lookups (if not already created by SQLAlchemy)
+            try:
+                conn.execute(
+                    text("CREATE INDEX ix_user_permissions_user_id ON user_permissions(user_id)")
+                )
+            except Exception as e:
+                # Index might already exist if created by SQLAlchemy, ignore
+                logger.debug(f"Index creation skipped (may already exist): {e}")
+        logger.info("Migration completed: created 'user_permissions' table.")
+    else:
+        # Table exists, check if all columns are present (for future migrations)
+        columns = [col["name"] for col in inspector.get_columns("user_permissions")]
+        required_columns = ["id", "user_id", "module", "granted_at", "granted_by"]
+        missing_columns = [col for col in required_columns if col not in columns]
+        if missing_columns:
+            logger.warning(
+                f"user_permissions table exists but missing columns: {missing_columns}. "
+                "Manual migration may be required."
+            )
+        # Ensure index exists (backwards compatible - won't fail if already exists)
+        try:
+            with engine.begin() as conn:
+                # Check if index exists by querying pg_indexes
+                result = conn.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) FROM pg_indexes
+                        WHERE tablename = 'user_permissions'
+                        AND indexname = 'ix_user_permissions_user_id'
+                        """
+                    )
+                ).scalar()
+                if result == 0:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX ix_user_permissions_user_id ON user_permissions(user_id)"
+                        )
+                    )
+                    logger.info("Created missing index on user_permissions.user_id")
+        except Exception as e:
+            # Ignore errors - index might already exist or table structure might differ
+            logger.debug(f"Index check/creation skipped: {e}")
 
 
 def init_db():

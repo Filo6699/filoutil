@@ -1,0 +1,1 @@
+"""Moodle-related commands module."""

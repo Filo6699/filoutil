@@ -43,7 +43,20 @@ def text_to_png(src: str) -> BytesIO:
 
 
 async def ensure_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if the user is an admin."""
+    """Check if the user is an admin. Works with both message and callback query updates."""
+    # Handle callback queries
+    if update.callback_query and update.callback_query.from_user:
+        telegram_id = update.callback_query.from_user.id
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, telegram_id)
+            if not user or user.role != "admin":
+                await update.callback_query.answer(
+                    "❌ This command is only available to admins.", show_alert=True
+                )
+                return False
+        return True
+
+    # Handle messages
     if update.message is None or update.message.from_user is None:
         return False
 
