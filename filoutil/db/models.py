@@ -208,3 +208,55 @@ class MoodleNotification(Base):
 
     # Relationships
     user: Mapped["User"] = relationship()
+
+
+class MoodleCourse(Base):
+    __tablename__ = "moodle_courses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)  # Moodle's course ID
+    course_name: Mapped[str] = mapped_column(String)
+    shortname: Mapped[str] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship()
+
+    __table_args__ = (UniqueConstraint("user_id", "course_id", name="uq_user_course"),)
+
+
+class MoodleGrade(Base):
+    __tablename__ = "moodle_grades"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)  # Moodle's course ID
+    grade_item_id: Mapped[int] = mapped_column(Integer, index=True)  # Moodle's grade item ID
+    item_name: Mapped[str] = mapped_column(String)
+    item_type: Mapped[str] = mapped_column(String, nullable=True)  # e.g., "mod", "category"
+    item_module: Mapped[str] = mapped_column(
+        String, nullable=True
+    )  # e.g., "assign", "quiz" - can be filtered here if needed
+    grade_raw: Mapped[float] = mapped_column(Float, nullable=True)
+    grade_formatted: Mapped[str] = mapped_column(String, nullable=True)
+    grade_max: Mapped[float] = mapped_column(Float, nullable=True)
+    grade_min: Mapped[float] = mapped_column(Float, nullable=True)
+    grade_date_submitted: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
+    grade_date_graded: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
+    feedback: Mapped[str] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    user: Mapped["User"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "course_id", "grade_item_id", name="uq_user_course_grade"),
+    )

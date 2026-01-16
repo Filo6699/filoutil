@@ -23,6 +23,7 @@ def get_moodle_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("➕ Add Session", callback_data="moodle:add_session"),
         ],
         [InlineKeyboardButton("🔔 Notifications", callback_data="moodle:notifications")],
+        [InlineKeyboardButton("📊 Grades", callback_data="moodle:grades")],
         [
             InlineKeyboardButton("⚙️ Refresh Settings", callback_data="moodle:refresh_settings"),
             InlineKeyboardButton(
@@ -398,3 +399,158 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 return
 
             await edit_session_name_callback(db, user.id, session_id, query, context)
+
+    elif action == "grades":
+        # Handle grades menu and gradebook view
+        from filoutil.commands.moodle.grades import show_gradebook, show_grades_menu
+
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            if len(data) == 2:
+                # Show grades menu
+                await show_grades_menu(db, user.id, query, context, page=0)
+            elif len(data) >= 3:
+                sub_action = data[2]
+                if sub_action == "page":
+                    # Handle pagination: moodle:grades:page:{page_number}
+                    if len(data) >= 4:
+                        try:
+                            page = int(data[3])
+                            await show_grades_menu(db, user.id, query, context, page=page)
+                        except (ValueError, IndexError):
+                            await query.answer("❌ Invalid page number.", show_alert=True)
+                elif sub_action == "course":
+                    # Show gradebook for a course: moodle:grades:course:{course_id}
+                    if len(data) >= 4:
+                        try:
+                            course_id = int(data[3])
+                            await show_gradebook(db, user.id, course_id, query, context)
+                        except (ValueError, IndexError):
+                            await query.answer("❌ Invalid course ID.", show_alert=True)
+                elif sub_action == "menu":
+                    # Back to grades menu
+                    await show_grades_menu(db, user.id, query, context, page=0)
+
+    elif action == "sync_courses":
+        # Handle manual course sync
+        from filoutil.moodle_cabinet.course_watcher import process_courses_for_user
+
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            # Get user's active sessions
+            active_sessions = get_active_sessions_for_user(db, user.id)
+
+            if not active_sessions:
+                text = (
+                    "📊 *Sync Courses & Grades*\n\n"
+                    "❌ You don't have any active Moodle sessions.\n\n"
+                    'Use "➕ Add Session" to create a new session first.'
+                )
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "➕ Add Session", callback_data="moodle:add_session"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "⬅️ Back to Moodle Menu", callback_data="moodle:menu"
+                            )
+                        ],
+                    ]
+                )
+                try:
+                    await query.edit_message_text(
+                        text, reply_markup=keyboard, parse_mode="Markdown"
+                    )
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
+                return
+
+            # Show processing message
+            text = (
+                f"📊 *Syncing Courses & Grades*\n\n"
+                f"Processing {len(active_sessions)} active session(s)...\n\n"
+                f"⏳ Please wait..."
+            )
+            try:
+                await query.edit_message_text(text, parse_mode="Markdown")
+            except BadRequest:
+                pass
+
+            # Track processed user IDs to avoid processing the same user multiple times
+            # (users can have multiple sessions from different devices)
+            processed_user_ids = set()
+            processed_count = 0
+            error_count = 0
+            skipped_count = 0
+            total_grades_changed = 0
+            total_grades_unchanged = 0
+
+            for session in active_sessions:
+                # Skip if this user was already processed (multiple sessions for same user)
+                if session.user_id in processed_user_ids:
+                    skipped_count += 1
+                    continue
+
+                processed_user_ids.add(session.user_id)
+                try:
+                    stats = await process_courses_for_user(context.application, user.id, session)
+                    processed_count += 1
+                    total_grades_changed += stats.get("grades_changed", 0)
+                    total_grades_unchanged += stats.get("grades_unchanged", 0)
+                except Exception as e:
+                    logger.error(
+                        f"Error syncing courses for session {session.id}: {e}", exc_info=True
+                    )
+                    error_count += 1
+
+            # Show result
+            if error_count == 0:
+                text = (
+                    f"✅ *Sync Complete*\n\n"
+                    f"Successfully processed {processed_count} session(s).\n"
+                )
+                if skipped_count > 0:
+                    text += f"Skipped {skipped_count} duplicate session(s).\n"
+                text += f"\n*Grades:*\n"
+                text += f"Changed: {total_grades_changed}\n"
+                text += f"Unchanged: {total_grades_unchanged}\n"
+                text += f"\nYour courses and grades have been synced."
+            else:
+                text = (
+                    f"⚠️ *Sync Complete*\n\n"
+                    f"Processed: {processed_count} session(s)\n"
+                    f"Errors: {error_count} session(s)\n"
+                )
+                if skipped_count > 0:
+                    text += f"Skipped: {skipped_count} duplicate session(s)\n"
+                text += f"\n*Grades:*\n"
+                text += f"Changed: {total_grades_changed}\n"
+                text += f"Unchanged: {total_grades_unchanged}\n"
+                text += f"\nCheck logs for details."
+
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")]]
+            )
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
