@@ -1,7 +1,7 @@
 """Commands for viewing and managing Moodle notifications."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -21,11 +21,70 @@ logger = logging.getLogger(__name__)
 DEFAULT_NOTIFICATIONS_PER_PAGE = 10
 
 
+def format_time_ago(timestamp: int) -> str:
+    """
+    Format a Unix timestamp as a human-readable "time ago" string.
+    Matches Moodle's format: "2 mins 14 secs ago", "1 hour 27 mins ago", "3 days 10 hours ago"
+
+    Args:
+        timestamp: Unix timestamp (seconds since epoch)
+
+    Returns:
+        Formatted string like "2 mins 14 secs ago", "1 hour 27 mins ago", "3 days 10 hours ago"
+    """
+    if not timestamp or timestamp <= 0:
+        return "Unknown time"
+
+    now = datetime.now(timezone.utc)
+    created = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    delta = now - created
+
+    total_seconds = int(delta.total_seconds())
+
+    if total_seconds < 0:
+        return "Just now"
+
+    if total_seconds < 60:
+        return f"{total_seconds} secs ago"
+
+    # Calculate days, hours, minutes, seconds
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+
+    parts = []
+
+    # Moodle's pattern:
+    # - Less than 1 hour: show minutes and seconds (e.g., "16 mins 43 secs ago")
+    # - Less than 1 day: show hours and minutes (e.g., "1 hour 27 mins ago")
+    # - 1 day or more: show days and hours (e.g., "3 days 1 hour ago", "2 days 7 hours ago")
+
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+        if hours > 0:
+            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    elif hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+        if minutes > 0:
+            parts.append(f"{minutes} mins")
+    else:
+        # Less than an hour: show minutes and seconds
+        if minutes > 0:
+            parts.append(f"{minutes} mins")
+        if seconds > 0:
+            parts.append(f"{seconds} secs")
+
+    if not parts:
+        return "Just now"
+
+    # Join parts with spaces and add "ago"
+    return " ".join(parts) + " ago"
+
+
 def format_notification_preview(notification, index: int) -> str:
     """Format a notification for list display."""
-    time_str = notification.timecreatedpretty or datetime.fromtimestamp(
-        notification.timecreated
-    ).strftime("%Y-%m-%d %H:%M")
+    time_str = format_time_ago(notification.timecreated)
 
     subject = notification.shortenedsubject or notification.subject or "No subject"
     # Truncate if too long
@@ -182,13 +241,13 @@ async def show_notification_detail(
         await message.edit_message_text("❌ Notification not found.")
         return
 
-    # Format detailed message
-    time_str = notification.timecreatedpretty or datetime.fromtimestamp(
-        notification.timecreated
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    # Format detailed message - show both relative time and absolute time
+    time_ago = format_time_ago(notification.timecreated)
+    absolute_time = datetime.fromtimestamp(notification.timecreated).strftime("%Y-%m-%d %H:%M:%S")
 
     text = f"🔔 *Notification Details*\n\n"
-    text += f"*Time:* {time_str}\n\n"
+    text += f"*Time:* {time_ago}\n"
+    text += f"*Date:* {absolute_time}\n\n"
     text += f"*Subject:*\n{notification.subject}\n\n"
 
     if notification.smallmessage:
