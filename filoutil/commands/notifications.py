@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_NOTIFICATIONS_PER_PAGE = 10
 
 
+def escape_markdown(text: str) -> str:
+    """
+    Escape special Markdown characters for Telegram.
+
+    Args:
+        text: Text that may contain Markdown special characters
+
+    Returns:
+        Text with special characters escaped
+    """
+    if not text:
+        return ""
+    # Escape special Markdown characters: * _ [ ] ( ) ` ~
+    special_chars = ["*", "_", "[", "]", "(", ")", "`", "~"]
+    escaped = text
+    for char in special_chars:
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped
+
+
 def format_time_ago(timestamp: int) -> str:
     """
     Format a Unix timestamp as a human-readable "time ago" string.
@@ -90,6 +110,9 @@ def format_notification_preview(notification, index: int) -> str:
     # Truncate if too long
     if len(subject) > 50:
         subject = subject[:47] + "..."
+
+    # Escape Markdown special characters
+    subject = escape_markdown(subject)
 
     return f"*{index}.* {subject}\n   ⏰ {time_str}"
 
@@ -245,21 +268,29 @@ async def show_notification_detail(
     time_ago = format_time_ago(notification.timecreated)
     absolute_time = datetime.fromtimestamp(notification.timecreated).strftime("%Y-%m-%d %H:%M:%S")
 
+    # Escape Markdown special characters in notification content
+    subject = escape_markdown(notification.subject or "")
+    smallmessage = (
+        escape_markdown(notification.smallmessage or "") if notification.smallmessage else None
+    )
+    component = escape_markdown(notification.component or "") if notification.component else None
+    eventtype = escape_markdown(notification.eventtype or "") if notification.eventtype else None
+
     text = f"🔔 *Notification Details*\n\n"
     text += f"*Time:* {time_ago}\n"
     text += f"*Date:* {absolute_time}\n\n"
-    text += f"*Subject:*\n{notification.subject}\n\n"
+    text += f"*Subject:*\n{subject}\n\n"
 
-    if notification.smallmessage:
-        text += f"*Message:*\n{notification.smallmessage}\n\n"
+    if smallmessage:
+        text += f"*Message:*\n{smallmessage}\n\n"
 
     if notification.contexturl:
         text += f"🔗 [View in Moodle]({notification.contexturl})\n\n"
 
-    if notification.component:
-        text += f"*Component:* {notification.component}\n"
-    if notification.eventtype:
-        text += f"*Event Type:* {notification.eventtype}\n"
+    if component:
+        text += f"*Component:* {component}\n"
+    if eventtype:
+        text += f"*Event Type:* {eventtype}\n"
 
     keyboard = get_notification_detail_keyboard(notification_id, page)
 
