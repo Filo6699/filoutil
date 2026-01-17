@@ -4,7 +4,7 @@ This module handles fetching notifications from Moodle and sending them to users
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -21,6 +21,67 @@ LMS_BASE_URL = "https://lms.astanait.edu.kz"
 LMS_ENDPOINT = "/lib/ajax/service.php"
 DEFAULT_NOTIFICATION_LIMIT = 20
 DEFAULT_NOTIFICATION_OFFSET = 0
+
+
+def format_time_ago(timestamp: int) -> str:
+    """
+    Format a Unix timestamp as a human-readable "time ago" string.
+    Matches Moodle's format: "2 mins 14 secs ago", "1 hour 27 mins ago", "3 days 10 hours ago"
+
+    Args:
+        timestamp: Unix timestamp (seconds since epoch)
+
+    Returns:
+        Formatted string like "2 mins 14 secs ago", "1 hour 27 mins ago", "3 days 10 hours ago"
+    """
+    if not timestamp or timestamp <= 0:
+        return "Unknown time"
+
+    now = datetime.now(timezone.utc)
+    created = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    delta = now - created
+
+    total_seconds = int(delta.total_seconds())
+
+    if total_seconds < 0:
+        return "Just now"
+
+    if total_seconds < 60:
+        return f"{total_seconds} secs ago"
+
+    # Calculate days, hours, minutes, seconds
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+
+    parts = []
+
+    # Moodle's pattern:
+    # - Less than 1 hour: show minutes and seconds (e.g., "16 mins 43 secs ago")
+    # - Less than 1 day: show hours and minutes (e.g., "1 hour 27 mins ago")
+    # - 1 day or more: show days and hours (e.g., "3 days 1 hour ago", "2 days 7 hours ago")
+
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+        if hours > 0:
+            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    elif hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+        if minutes > 0:
+            parts.append(f"{minutes} mins")
+    else:
+        # Less than an hour: show minutes and seconds
+        if minutes > 0:
+            parts.append(f"{minutes} mins")
+        if seconds > 0:
+            parts.append(f"{seconds} secs")
+
+    if not parts:
+        return "Just now"
+
+    # Join parts with spaces and add "ago"
+    return " ".join(parts) + " ago"
 
 
 async def mark_all_notifications_as_read(
@@ -313,7 +374,7 @@ async def send_notification_to_user(
     try:
         # Format notification message
         subject = notification.subject or "New notification"
-        time_str = notification.timecreatedpretty or "Unknown time"
+        time_str = format_time_ago(notification.timecreated)
         context_link = notification.contexturl or ""
 
         message = f"🔔 *{subject}*\n\n"
