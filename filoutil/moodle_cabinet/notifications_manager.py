@@ -23,6 +23,26 @@ DEFAULT_NOTIFICATION_LIMIT = 20
 DEFAULT_NOTIFICATION_OFFSET = 0
 
 
+def escape_markdown(text: str) -> str:
+    """
+    Escape special Markdown characters for Telegram.
+
+    Args:
+        text: Text that may contain Markdown special characters
+
+    Returns:
+        Text with special characters escaped
+    """
+    if not text:
+        return ""
+    # Escape special Markdown characters: * _ [ ] ( ) ` ~
+    special_chars = ["*", "_", "[", "]", "(", ")", "`", "~"]
+    escaped = text
+    for char in special_chars:
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped
+
+
 def format_time_ago(timestamp: int) -> str:
     """
     Format a Unix timestamp as a human-readable "time ago" string.
@@ -373,13 +393,17 @@ async def send_notification_to_user(
     """
     try:
         # Format notification message
-        subject = notification.subject or "New notification"
+        # Escape Markdown special characters
+        subject = escape_markdown(notification.subject or "New notification")
+        smallmessage = (
+            escape_markdown(notification.smallmessage or "") if notification.smallmessage else None
+        )
         time_str = format_time_ago(notification.timecreated)
         context_link = notification.contexturl or ""
 
         message = f"🔔 *{subject}*\n\n"
-        if notification.smallmessage:
-            message += f"{notification.smallmessage}\n\n"
+        if smallmessage:
+            message += f"{smallmessage}\n\n"
         message += f"⏰ {time_str}"
 
         if context_link:
