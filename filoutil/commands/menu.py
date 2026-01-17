@@ -18,7 +18,7 @@ def get_main_menu_keyboard(user_permissions: list[str] = None) -> InlineKeyboard
 
     # Add Monitors button only if user has monitoring permission
     if user_permissions and "monitoring" in user_permissions:
-        keyboard.append([InlineKeyboardButton("📊 Monitors", callback_data="menu:monitors")])
+        keyboard.append([InlineKeyboardButton("🎛 Monitors", callback_data="menu:monitors")])
 
     # Add Moodle button only if user has moodle permission
     if user_permissions and "moodle" in user_permissions:
