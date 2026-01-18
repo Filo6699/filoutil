@@ -5,6 +5,7 @@ This module handles fetching courses and grades from Moodle and detecting change
 
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +25,7 @@ from filoutil.db.moodle_courses import (
 )
 from filoutil.db.postgres import SessionLocal
 from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
+from filoutil.moodle_cabinet.request_logger import log_moodle_request
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,10 @@ DEFAULT_COURSE_CHECK_INTERVAL = 300
 
 
 async def fetch_user_courses(
-    sesskey: str, moodleSession: str, moodle_user_id: int
+    sesskey: str,
+    moodleSession: str,
+    moodle_user_id: int,
+    session_refresh_id: int | None = None,
 ) -> tuple[bool, list[dict[str, Any]] | None, str | None]:
     """
     Fetch enrolled courses from Moodle API.
@@ -44,6 +49,7 @@ async def fetch_user_courses(
         sesskey: Moodle session key
         moodleSession: Moodle session cookie value
         moodle_user_id: Moodle user ID
+        session_refresh_id: Optional session refresh ID for logging
 
     Returns:
         Tuple of (success: bool, courses: list[dict] | None, error_message: str | None)
@@ -73,11 +79,27 @@ async def fetch_user_courses(
         }
     ]
 
+    # Measure request timing
+    start_time = time.perf_counter()
+    request_size_bytes = None
+    response_size_bytes = None
+    response_status_code = None
+    success = False
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Calculate request size (approximate)
+            import json
+
+            request_body = json.dumps(payload)
+            request_size_bytes = len(request_body.encode("utf-8"))
+
             response = await client.post(
                 url, params=params, headers=headers, cookies=cookies, json=payload
             )
+
+            response_status_code = response.status_code
+            response_size_bytes = len(response.content) if response.content else None
 
             if response.status_code == 200:
                 try:
@@ -91,6 +113,7 @@ async def fetch_user_courses(
                                 # Success - extract courses
                                 courses_data = item.get("data", {})
                                 courses = courses_data.get("courses", [])
+                                success = True
                                 return True, courses, None
                             elif error_val is True:
                                 error_msg = item.get("message", "Unknown error")
@@ -112,13 +135,31 @@ async def fetch_user_courses(
                 return False, None, f"HTTP {response.status_code}: {error_text}"
 
     except httpx.RequestError as e:
+        response_status_code = 0  # No response received
         return False, None, f"Request failed: {str(e)}"
     except Exception as e:
+        response_status_code = 0  # No response received
         return False, None, f"Unexpected error: {str(e)}"
+    finally:
+        # Log the request
+        end_time = time.perf_counter()
+        response_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        log_moodle_request(
+            http_method="POST",
+            endpoint_path=LMS_ENDPOINT,
+            response_status_code=response_status_code or 0,
+            response_time_ms=response_time_ms,
+            success=success,
+            api_method_name="core_course_get_enrolled_courses_by_timeline_classification",
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            session_refresh_id=session_refresh_id,
+        )
 
 
 async def fetch_course_grades(
-    moodleSession: str, course_id: int
+    moodleSession: str, course_id: int, session_refresh_id: int | None = None
 ) -> tuple[bool, list[dict[str, Any]] | None, str | None]:
     """
     Fetch grade items for a course by scraping the gradebook HTML page.
@@ -126,11 +167,13 @@ async def fetch_course_grades(
     Args:
         moodleSession: Moodle session cookie value
         course_id: Moodle course ID
+        session_refresh_id: Optional session refresh ID for logging
 
     Returns:
         Tuple of (success: bool, grade_items: list[dict] | None, error_message: str | None)
     """
     url = f"{LMS_BASE_URL}/grade/report/user/index.php"
+    endpoint_path = "/grade/report/user/index.php"
     params = {"id": course_id}
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -139,9 +182,19 @@ async def fetch_course_grades(
     }
     cookies = {"MoodleSession": moodleSession}
 
+    # Measure request timing
+    start_time = time.perf_counter()
+    request_size_bytes = None
+    response_size_bytes = None
+    response_status_code = None
+    success = False
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url, params=params, headers=headers, cookies=cookies)
+
+            response_status_code = response.status_code
+            response_size_bytes = len(response.content) if response.content else None
 
             if response.status_code == 200:
                 try:
@@ -295,6 +348,7 @@ async def fetch_course_grades(
                         grade_items.append(grade_item)
                         processed_count += 1
 
+                    success = True
                     return True, grade_items, None
 
                 except Exception as e:
@@ -308,9 +362,27 @@ async def fetch_course_grades(
                 return False, None, f"HTTP {response.status_code}: {error_text}"
 
     except httpx.RequestError as e:
+        response_status_code = 0  # No response received
         return False, None, f"Request failed: {str(e)}"
     except Exception as e:
+        response_status_code = 0  # No response received
         return False, None, f"Unexpected error: {str(e)}"
+    finally:
+        # Log the request
+        end_time = time.perf_counter()
+        response_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        log_moodle_request(
+            http_method="GET",
+            endpoint_path=endpoint_path,
+            response_status_code=response_status_code or 0,
+            response_time_ms=response_time_ms,
+            success=success,
+            api_method_name=None,  # GET request, no API method
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            session_refresh_id=session_refresh_id,
+        )
 
 
 def sync_courses_for_user(
@@ -603,6 +675,7 @@ async def process_courses_for_user(
             session_refresh.sesskey,
             session_refresh.moodleSession,
             moodle_user_id,
+            session_refresh_id=session_refresh.id,
         )
 
         if not success:
@@ -633,6 +706,7 @@ async def process_courses_for_user(
                 grades_success, grade_items, grades_error = await fetch_course_grades(
                     session_refresh.moodleSession,
                     course.course_id,
+                    session_refresh_id=session_refresh.id,
                 )
 
                 if not grades_success:
