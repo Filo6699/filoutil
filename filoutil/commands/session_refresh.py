@@ -13,6 +13,7 @@ from filoutil.db.session_refresh import (
     get_user_refresh_interval,
 )
 from filoutil.db.users import get_user_by_telegram_id
+from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
 from filoutil.session_refresh.engine import run_session_refresh_task
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,27 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         session_refresh = create_session_refresh(
             db, user.id, sesskey, moodleSession, refresh_interval, name=session_name
         )
+
+        # Immediately fetch and store Moodle user ID
+        try:
+            success, moodle_user_id, error_msg = await fetch_moodle_user_id(sesskey, moodleSession)
+            if success and moodle_user_id:
+                session_refresh.moodle_user_id = moodle_user_id
+                db.commit()
+                db.refresh(session_refresh)
+                logger.info(
+                    f"Successfully fetched Moodle user ID {moodle_user_id} for session {session_refresh.id}"
+                )
+            else:
+                logger.warning(
+                    f"Could not fetch Moodle user ID for session {session_refresh.id}: {error_msg}"
+                )
+        except Exception as e:
+            logger.error(
+                f"Error fetching Moodle user ID for session {session_refresh.id}: {e}",
+                exc_info=True,
+            )
+            # Continue anyway - the user ID can be fetched later
 
         # Don't start the task here - let the scheduler pick it up to avoid duplicates
         # The scheduler will detect the new active session and start the task

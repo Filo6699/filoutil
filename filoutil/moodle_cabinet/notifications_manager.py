@@ -184,6 +184,33 @@ async def mark_all_notifications_as_read(
         return False, f"Unexpected error: {str(e)}"
 
 
+async def fetch_moodle_user_id(
+    sesskey: str, moodleSession: str
+) -> tuple[bool, int | None, str | None]:
+    """
+    Fetch Moodle user ID from session by making a test notification request.
+
+    Args:
+        sesskey: Moodle session key
+        moodleSession: Moodle session cookie value
+
+    Returns:
+        Tuple of (success: bool, moodle_user_id: int | None, error_message: str | None)
+    """
+    # Fetch one notification with useridto=0 to get the actual useridto from response
+    success, test_notifications, error_msg = await fetch_notifications(
+        sesskey, moodleSession, 0, limit=1
+    )
+    if success and test_notifications and len(test_notifications) > 0:
+        moodle_user_id = test_notifications[0].get("useridto")
+        if moodle_user_id:
+            return True, moodle_user_id, None
+        else:
+            return False, None, "No useridto found in notification response"
+    else:
+        return False, None, error_msg or "Failed to fetch notifications"
+
+
 async def fetch_notifications(
     sesskey: str,
     moodleSession: str,
@@ -438,30 +465,24 @@ async def process_notifications_for_user(
 
         # If not stored, try to extract from first notification fetch
         if not moodle_user_id:
-            # Fetch one notification to get useridto
-            # Try with a dummy useridto first - Moodle might return the actual useridto in the response
-            success, test_notifications, error_msg = await fetch_notifications(
-                session_refresh.sesskey,
-                session_refresh.moodleSession,
-                0,  # Temporary - we'll get the actual ID from response
-                limit=1,
+            success, fetched_user_id, error_msg = await fetch_moodle_user_id(
+                session_refresh.sesskey, session_refresh.moodleSession
             )
-            if success and test_notifications and len(test_notifications) > 0:
-                moodle_user_id = test_notifications[0].get("useridto")
-                if moodle_user_id:
-                    # Store it in the session refresh
-                    with SessionLocal() as db:
-                        from filoutil.db.models import SessionRefresh
+            if success and fetched_user_id:
+                moodle_user_id = fetched_user_id
+                # Store it in the session refresh
+                with SessionLocal() as db:
+                    from filoutil.db.models import SessionRefresh
 
-                        stored_session = db.execute(
-                            select(SessionRefresh).where(SessionRefresh.id == session_refresh.id)
-                        ).scalar_one_or_none()
-                        if stored_session:
-                            stored_session.moodle_user_id = moodle_user_id
-                            db.commit()
-                            db.refresh(stored_session)
-                            # Update the passed session_refresh object
-                            session_refresh.moodle_user_id = moodle_user_id
+                    stored_session = db.execute(
+                        select(SessionRefresh).where(SessionRefresh.id == session_refresh.id)
+                    ).scalar_one_or_none()
+                    if stored_session:
+                        stored_session.moodle_user_id = moodle_user_id
+                        db.commit()
+                        db.refresh(stored_session)
+                        # Update the passed session_refresh object
+                        session_refresh.moodle_user_id = moodle_user_id
 
         if not moodle_user_id:
             logger.warning(f"Could not determine Moodle user ID for user {user_id}")
