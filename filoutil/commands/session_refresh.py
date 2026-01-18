@@ -97,6 +97,32 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text("❌ User not found.")
             return
 
+        # Check if user has agreed to terms and confirmed student status
+        if not user.moodle_session_agreement or not user.moodle_student_confirmation:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "📖 Read & Agree to Terms", callback_data="moodle:add_session"
+                        )
+                    ],
+                    [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
+                ]
+            )
+            await update.message.reply_text(
+                "⚠️ *Agreement Required*\n\n"
+                "Before adding a Moodle session, you must:\n"
+                "1. Confirm that you're a student\n"
+                "2. Read and agree to the security notice\n\n"
+                "This notice explains what access you're granting and the security implications.\n\n"
+                'Please click "📖 Read & Agree to Terms" below to continue.',
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+            return
+
         # Get user's refresh interval setting
         refresh_interval = get_user_refresh_interval(db, user.id)
 

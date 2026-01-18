@@ -14,6 +14,66 @@ from filoutil.db.users import get_user_by_telegram_id
 
 logger = logging.getLogger(__name__)
 
+# Security notice text for Moodle session agreement
+MOODLE_SESSION_SECURITY_NOTICE = (
+    "⚠️ *Security Notice & Terms*\n\n"
+    "Before adding a Moodle session, please read this carefully:\n\n"
+    "*What you're sharing:*\n"
+    "• `MoodleSession` cookie - your active login session\n"
+    "• `sesskey` - session security key\n\n"
+    "⚠️ By sharing these credentials with this bot, you are granting "
+    "it full access to your Moodle account. The bot will be able to:\n"
+    "• View your courses, grades, and notifications\n"
+    "• Access any data visible in your Moodle account\n"
+    "• Perform actions on your behalf\n\n"
+    "Only use this bot if you trust the developers.\n\n"
+    "*How to get these values:*\n"
+    "1. Open your Moodle site in a browser and log in\n"
+    "2. Press F12 to open Developer Tools\n"
+    "3. Go to Application/Storage → Cookies\n"
+    "4. Find and copy the `MoodleSession` cookie value\n"
+    "5. Go to Console tab and run: `M.cfg.sesskey`\n"
+    "6. Copy the sesskey value\n\n"
+    "*Please confirm both statements below:*"
+)
+
+# Russian version of the security notice
+MOODLE_SESSION_SECURITY_NOTICE_RU = (
+    "⚠️ *Уведомление о безопасности и условия*\n\n"
+    "Перед добавлением сессии Moodle, пожалуйста, внимательно прочитайте:\n\n"
+    "*Что вы передаёте:*\n"
+    "• Cookie `MoodleSession` - ваша активная сессия входа\n"
+    "• `sesskey` - ключ безопасности сессии\n\n"
+    "⚠️ Передавая эти учётные данные этому боту, вы предоставляете "
+    "ему полный доступ к вашему аккаунту Moodle. Бот сможет:\n"
+    "• Просматривать ваши курсы, оценки и уведомления\n"
+    "• Получать доступ к любым данным, видимым в вашем аккаунте Moodle\n"
+    "• Выполнять действия от вашего имени\n\n"
+    "Используйте этого бота только если вы доверяете разработчикам.\n\n"
+    "*Как получить эти значения:*\n"
+    "1. Откройте ваш сайт Moodle в браузере и войдите в систему\n"
+    "2. Нажмите F12 для открытия инструментов разработчика\n"
+    "3. Перейдите в Application/Storage → Cookies\n"
+    "4. Найдите и скопируйте значение cookie `MoodleSession`\n"
+    "5. Перейдите во вкладку Console и выполните: `M.cfg.sesskey`\n"
+    "6. Скопируйте значение sesskey\n\n"
+    "*Пожалуйста, подтвердите оба утверждения ниже:*"
+)
+
+
+def get_security_notice_text(lang: str = "en") -> str:
+    """Get security notice text in the specified language.
+
+    Args:
+        lang: Language code ('en' or 'ru')
+
+    Returns:
+        Security notice text in the requested language
+    """
+    if lang == "ru":
+        return MOODLE_SESSION_SECURITY_NOTICE_RU
+    return MOODLE_SESSION_SECURITY_NOTICE
+
 
 def get_moodle_menu_keyboard() -> InlineKeyboardMarkup:
     """Generate the Moodle menu keyboard."""
@@ -215,6 +275,302 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             await show_sessions_list(db, user.id, query, context, page=page)
 
+    elif action == "toggle_student":
+        # Toggle student confirmation
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                await query.answer("❌ User not found.", show_alert=True)
+                return
+
+            # Toggle the student confirmation
+            user.moodle_student_confirmation = not user.moodle_student_confirmation
+            db.commit()
+
+            # Get language from callback data (default to 'en')
+            lang = data[2] if len(data) > 2 else "en"
+
+            # Refresh the agreement screen with updated checkboxes
+            # Rebuild the agreement UI
+            text = get_security_notice_text(lang)
+
+            # Build keyboard with updated checkboxes
+            terms_agreed = user.moodle_session_agreement
+            student_confirmed = user.moodle_student_confirmation
+
+            keyboard_buttons = []
+
+            # Language toggle button
+            lang_button_text = "In English" if lang == "ru" else "На русском"
+            lang_toggle = "en" if lang == "ru" else "ru"
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        lang_button_text, callback_data=f"moodle:switch_lang:{lang_toggle}"
+                    )
+                ]
+            )
+
+            # Student confirmation button
+            student_icon = "☑️" if student_confirmed else "⬜"
+            student_text = (
+                "Я подтверждаю, что я студент" if lang == "ru" else "I confirm that I'm a student"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{student_icon} {student_text}",
+                        callback_data=f"moodle:toggle_student:{lang}",
+                    )
+                ]
+            )
+
+            # Terms agreement button
+            terms_icon = "☑️" if terms_agreed else "⬜"
+            terms_text = (
+                "Я понимаю и соглашаюсь с условиями выше"
+                if lang == "ru"
+                else "I understand and agree to the terms above"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{terms_icon} {terms_text}", callback_data=f"moodle:toggle_terms:{lang}"
+                    )
+                ]
+            )
+
+            # Continue button (only enabled if both are checked)
+            if terms_agreed and student_confirmed:
+                continue_text = "✅ Продолжить" if lang == "ru" else "✅ Continue"
+                keyboard_buttons.append(
+                    [InlineKeyboardButton(continue_text, callback_data="moodle:finalize_agreement")]
+                )
+
+            cancel_text = "❌ Отмена" if lang == "ru" else "❌ Cancel"
+            keyboard_buttons.append(
+                [InlineKeyboardButton(cancel_text, callback_data="moodle:menu")]
+            )
+
+            keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+
+    elif action == "toggle_terms":
+        # Toggle terms agreement
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                await query.answer("❌ User not found.", show_alert=True)
+                return
+
+            # Toggle the terms agreement
+            user.moodle_session_agreement = not user.moodle_session_agreement
+            db.commit()
+
+            # Get language from callback data (default to 'en')
+            lang = data[2] if len(data) > 2 else "en"
+
+            # Refresh the agreement screen with updated checkboxes
+            # Rebuild the agreement UI
+            text = get_security_notice_text(lang)
+
+            # Build keyboard with updated checkboxes
+            terms_agreed = user.moodle_session_agreement
+            student_confirmed = user.moodle_student_confirmation
+
+            keyboard_buttons = []
+
+            # Language toggle button
+            lang_button_text = "In English" if lang == "ru" else "На русском"
+            lang_toggle = "en" if lang == "ru" else "ru"
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        lang_button_text, callback_data=f"moodle:switch_lang:{lang_toggle}"
+                    )
+                ]
+            )
+
+            # Student confirmation button
+            student_icon = "☑️" if student_confirmed else "⬜"
+            student_text = (
+                "Я подтверждаю, что я студент" if lang == "ru" else "I confirm that I'm a student"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{student_icon} {student_text}",
+                        callback_data=f"moodle:toggle_student:{lang}",
+                    )
+                ]
+            )
+
+            # Terms agreement button
+            terms_icon = "☑️" if terms_agreed else "⬜"
+            terms_text = (
+                "Я понимаю и соглашаюсь с условиями выше"
+                if lang == "ru"
+                else "I understand and agree to the terms above"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{terms_icon} {terms_text}", callback_data=f"moodle:toggle_terms:{lang}"
+                    )
+                ]
+            )
+
+            # Continue button (only enabled if both are checked)
+            if terms_agreed and student_confirmed:
+                continue_text = "✅ Продолжить" if lang == "ru" else "✅ Continue"
+                keyboard_buttons.append(
+                    [InlineKeyboardButton(continue_text, callback_data="moodle:finalize_agreement")]
+                )
+
+            cancel_text = "❌ Отмена" if lang == "ru" else "❌ Cancel"
+            keyboard_buttons.append(
+                [InlineKeyboardButton(cancel_text, callback_data="moodle:menu")]
+            )
+
+            keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+
+    elif action == "switch_lang":
+        # Switch language for security notice
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                await query.answer("❌ User not found.", show_alert=True)
+                return
+
+            # Get target language from callback data
+            lang = data[2] if len(data) > 2 else "en"
+
+            # Build the agreement UI with the new language
+            text = get_security_notice_text(lang)
+
+            # Build keyboard with updated checkboxes
+            terms_agreed = user.moodle_session_agreement
+            student_confirmed = user.moodle_student_confirmation
+
+            keyboard_buttons = []
+
+            # Language toggle button
+            lang_button_text = "In English" if lang == "ru" else "На русском"
+            lang_toggle = "en" if lang == "ru" else "ru"
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        lang_button_text, callback_data=f"moodle:switch_lang:{lang_toggle}"
+                    )
+                ]
+            )
+
+            # Student confirmation button
+            student_icon = "☑️" if student_confirmed else "⬜"
+            student_text = (
+                "Я подтверждаю, что я студент" if lang == "ru" else "I confirm that I'm a student"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{student_icon} {student_text}",
+                        callback_data=f"moodle:toggle_student:{lang}",
+                    )
+                ]
+            )
+
+            # Terms agreement button
+            terms_icon = "☑️" if terms_agreed else "⬜"
+            terms_text = (
+                "Я понимаю и соглашаюсь с условиями выше"
+                if lang == "ru"
+                else "I understand and agree to the terms above"
+            )
+            keyboard_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{terms_icon} {terms_text}", callback_data=f"moodle:toggle_terms:{lang}"
+                    )
+                ]
+            )
+
+            # Continue button (only enabled if both are checked)
+            if terms_agreed and student_confirmed:
+                continue_text = "✅ Продолжить" if lang == "ru" else "✅ Continue"
+                keyboard_buttons.append(
+                    [InlineKeyboardButton(continue_text, callback_data="moodle:finalize_agreement")]
+                )
+
+            cancel_text = "❌ Отмена" if lang == "ru" else "❌ Cancel"
+            keyboard_buttons.append(
+                [InlineKeyboardButton(cancel_text, callback_data="moodle:menu")]
+            )
+
+            keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+
+    elif action == "finalize_agreement":
+        # Handle completion of agreement (both boxes checked)
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            # Verify both are checked
+            if not user.moodle_session_agreement or not user.moodle_student_confirmation:
+                await query.answer("⚠️ Please confirm both statements first.", show_alert=True)
+                return
+
+            # Show the add session instructions
+            active_sessions = get_active_sessions_for_user(db, user.id)
+            session_count = len(active_sessions)
+            max_sessions = 5
+
+            text = (
+                f"✅ *Agreement Confirmed*\n\n"
+                f"*Current sessions:* {session_count}/{max_sessions}\n\n"
+                f"*How to get your session credentials:*\n\n"
+                f"1. Open Moodle in browser and log in\n"
+                f"2. Press F12 → Application/Storage → Cookies\n"
+                f"3. Copy `MoodleSession` cookie value\n"
+                f"4. In Console, run: `M.cfg.sesskey`\n"
+                f"5. Copy the sesskey value\n\n"
+                f"*Then send:*\n"
+                '`/moodle_add {"sesskey": "abc123", "moodleSession": "xyz789", "name": "My Session"}`\n\n'
+                f"*Note:* Maximum {max_sessions} active sessions allowed."
+            )
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
+                    [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
+                ]
+            )
+            try:
+                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+
     elif action == "add_session":
         # Check current session count and show instructions
         with SessionLocal() as db:
@@ -230,29 +586,108 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             session_count = len(active_sessions)
             max_sessions = 5
 
-            if session_count >= max_sessions:
+            # Check if user has agreed to terms
+            if not user.moodle_session_agreement or not user.moodle_student_confirmation:
+                # Default to English
+                lang = "en"
+                text = get_security_notice_text(lang)
+
+                # Build keyboard with checkboxes
+                terms_agreed = user.moodle_session_agreement
+                student_confirmed = user.moodle_student_confirmation
+
+                keyboard_buttons = []
+
+                # Language toggle button
+                lang_button_text = "На русском"
+                lang_toggle = "ru"
+                keyboard_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            lang_button_text, callback_data=f"moodle:switch_lang:{lang_toggle}"
+                        )
+                    ]
+                )
+
+                # Student confirmation button
+                student_icon = "☑️" if student_confirmed else "⬜"
+                keyboard_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            f"{student_icon} I confirm that I'm a student",
+                            callback_data=f"moodle:toggle_student:{lang}",
+                        )
+                    ]
+                )
+
+                # Terms agreement button
+                terms_icon = "☑️" if terms_agreed else "⬜"
+                keyboard_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            f"{terms_icon} I understand and agree to the terms above",
+                            callback_data=f"moodle:toggle_terms:{lang}",
+                        )
+                    ]
+                )
+
+                # Continue button (only enabled if both are checked)
+                if terms_agreed and student_confirmed:
+                    keyboard_buttons.append(
+                        [
+                            InlineKeyboardButton(
+                                "✅ Continue", callback_data="moodle:finalize_agreement"
+                            )
+                        ]
+                    )
+
+                keyboard_buttons.append(
+                    [InlineKeyboardButton("❌ Cancel", callback_data="moodle:menu")]
+                )
+
+                keyboard = InlineKeyboardMarkup(keyboard_buttons)
+            elif session_count >= max_sessions:
                 text = (
                     f"➕ *Add Moodle Session*\n\n"
                     f"❌ You already have {session_count} active sessions (maximum: {max_sessions}).\n\n"
                     f"Please stop a session before adding a new one.\n\n"
                     f'Use "📋 My Sessions" to manage your sessions.'
                 )
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
+                        [
+                            InlineKeyboardButton(
+                                "⬅️ Back to Moodle Menu", callback_data="moodle:menu"
+                            )
+                        ],
+                    ]
+                )
             else:
                 text = (
                     f"➕ *Add Moodle Session*\n\n"
                     f"*Current sessions:* {session_count}/{max_sessions}\n\n"
-                    f"To add a new Moodle session, send:\n\n"
-                    '`/moodle_add {"sesskey": "...", "moodleSession": "...", "name": "Optional Name"}`\n\n'
-                    "Or use the command directly with your session data.\n\n"
-                    "*Note:* You can have up to 2-3 active sessions at the same time."
+                    f"*How to get your session credentials:*\n\n"
+                    f"1. Open Moodle in browser and log in\n"
+                    f"2. Press F12 → Application/Storage → Cookies\n"
+                    f"3. Copy `MoodleSession` cookie value\n"
+                    f"4. In Console, run: `M.cfg.sesskey`\n"
+                    f"5. Copy the sesskey value\n\n"
+                    f"*Then send:*\n"
+                    '`/moodle_add {"sesskey": "abc123", "moodleSession": "xyz789", "name": "My Session"}`\n\n'
+                    f"*Note:* Maximum {max_sessions} active sessions allowed."
+                )
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
+                        [
+                            InlineKeyboardButton(
+                                "⬅️ Back to Moodle Menu", callback_data="moodle:menu"
+                            )
+                        ],
+                    ]
                 )
 
-            keyboard = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
-                    [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
-                ]
-            )
             try:
                 await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
             except BadRequest as e:

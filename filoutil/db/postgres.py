@@ -46,6 +46,24 @@ def run_migrations():
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN last_activity_at TIMESTAMP"))
             logger.info("Migration completed: added 'last_activity_at' column.")
+        if "moodle_session_agreement" not in columns:
+            logger.info("Adding missing column 'moodle_session_agreement' to users table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN moodle_session_agreement BOOLEAN DEFAULT FALSE"
+                    )
+                )
+            logger.info("Migration completed: added 'moodle_session_agreement' column.")
+        if "moodle_student_confirmation" not in columns:
+            logger.info("Adding missing column 'moodle_student_confirmation' to users table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN moodle_student_confirmation BOOLEAN DEFAULT FALSE"
+                    )
+                )
+            logger.info("Migration completed: added 'moodle_student_confirmation' column.")
 
     # Check if session_refresh table exists and add columns
     if "session_refresh" in inspector.get_table_names():

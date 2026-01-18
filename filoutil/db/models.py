@@ -27,6 +27,8 @@ class User(Base):
     role: Mapped[str] = mapped_column(String, default="user")
     whitelisted: Mapped[bool] = mapped_column(Boolean, default=False)
     settings: Mapped[dict] = mapped_column(JSON, default={})
+    moodle_session_agreement: Mapped[bool] = mapped_column(Boolean, default=False)
+    moodle_student_confirmation: Mapped[bool] = mapped_column(Boolean, default=False)
     last_activity_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
