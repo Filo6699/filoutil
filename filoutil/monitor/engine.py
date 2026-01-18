@@ -166,7 +166,7 @@ async def process_status_change(
             # Resolve incident
             resolve_incident(db, monitor.id)
             if monitor.alert_on_up:
-                duration = datetime.utcnow() - incident.started_at
+                duration = datetime.now(timezone.utc) - incident.started_at
                 alert_message = f"🟢 *Monitor RECOVERED:* {monitor.name}\nURL: {monitor.url}\nDowntime duration: {duration}"
 
     # SSL Expiry Alert

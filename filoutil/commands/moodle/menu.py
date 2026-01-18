@@ -75,7 +75,7 @@ def get_security_notice_text(lang: str = "en") -> str:
     return MOODLE_SESSION_SECURITY_NOTICE
 
 
-def get_moodle_menu_keyboard() -> InlineKeyboardMarkup:
+def get_moodle_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
     """Generate the Moodle menu keyboard."""
     keyboard = [
         [
@@ -90,8 +90,8 @@ def get_moodle_menu_keyboard() -> InlineKeyboardMarkup:
                 "⚙️ Notification Settings", callback_data="moodle:notification_settings"
             ),
         ],
-        [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="menu:main")],
     ]
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="menu:main")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -116,7 +116,7 @@ async def moodle_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
         await update.message.reply_text(
-            text, reply_markup=get_moodle_menu_keyboard(), parse_mode="Markdown"
+            text, reply_markup=get_moodle_menu_keyboard(user.role), parse_mode="Markdown"
         )
 
 
@@ -142,12 +142,12 @@ async def show_moodle_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
-                    reply_markup=get_moodle_menu_keyboard(),
+                    reply_markup=get_moodle_menu_keyboard(user.role),
                     parse_mode="Markdown",
                 )
             else:
                 await query.edit_message_text(
-                    text, reply_markup=get_moodle_menu_keyboard(), parse_mode="Markdown"
+                    text, reply_markup=get_moodle_menu_keyboard(user.role), parse_mode="Markdown"
                 )
         except BadRequest as e:
             if "Message is not modified" not in str(e):

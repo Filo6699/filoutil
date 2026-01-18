@@ -1,7 +1,7 @@
 """Admin user management panel for managing bot users, whitelist, and permissions."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
 from filoutil.commands.admin import ensure_admin
+from filoutil.config import format_time_for_display
 from filoutil.db.permissions import (
     get_user_permissions,
     grant_permission,
@@ -62,6 +63,14 @@ def get_user_list_keyboard(users: list, page: int = 0) -> InlineKeyboardMarkup:
 
     # Refresh button
     keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"admin_users:list:{page}")])
+
+    # Quiet hours management button
+    keyboard.append(
+        [InlineKeyboardButton("🔇 Quiet Hours", callback_data="admin:quiet_hours:menu")]
+    )
+
+    # Back to main menu button
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -215,14 +224,22 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             role_display = "👑 Admin" if user.role == "admin" else "👤 User"
             whitelist_status = "✅ Whitelisted" if user.whitelisted else "❌ Not whitelisted"
 
-            last_activity = (
-                user.last_activity_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-                if user.last_activity_at
-                else "Never"
-            )
-            created_at = (
-                user.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if user.created_at else "Unknown"
-            )
+            # Format timestamps in configured timezone
+            if user.last_activity_at:
+                last_activity_dt = user.last_activity_at
+                if last_activity_dt.tzinfo is None:
+                    last_activity_dt = last_activity_dt.replace(tzinfo=timezone.utc)
+                last_activity = format_time_for_display(last_activity_dt)
+            else:
+                last_activity = "Never"
+
+            if user.created_at:
+                created_at_dt = user.created_at
+                if created_at_dt.tzinfo is None:
+                    created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+                created_at = format_time_for_display(created_at_dt)
+            else:
+                created_at = "Unknown"
 
             text = (
                 f"👤 *User Details*\n\n"
@@ -246,6 +263,12 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
+
+    elif action == "quiet_hours":
+        # Handle quiet hours management
+        from filoutil.commands.moodle.quiet_hours import quiet_hours_callback
+
+        await quiet_hours_callback(update, context)
 
     elif action == "toggle_whitelist":
         # Toggle whitelist status
@@ -275,14 +298,22 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             role_display = "👑 Admin" if user.role == "admin" else "👤 User"
             whitelist_status = "✅ Whitelisted" if user.whitelisted else "❌ Not whitelisted"
 
-            last_activity = (
-                user.last_activity_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-                if user.last_activity_at
-                else "Never"
-            )
-            created_at = (
-                user.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if user.created_at else "Unknown"
-            )
+            # Format timestamps in configured timezone
+            if user.last_activity_at:
+                last_activity_dt = user.last_activity_at
+                if last_activity_dt.tzinfo is None:
+                    last_activity_dt = last_activity_dt.replace(tzinfo=timezone.utc)
+                last_activity = format_time_for_display(last_activity_dt)
+            else:
+                last_activity = "Never"
+
+            if user.created_at:
+                created_at_dt = user.created_at
+                if created_at_dt.tzinfo is None:
+                    created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+                created_at = format_time_for_display(created_at_dt)
+            else:
+                created_at = "Unknown"
 
             text = (
                 f"👤 *User Details*\n\n"
@@ -306,6 +337,12 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
+
+    elif action == "quiet_hours":
+        # Handle quiet hours management
+        from filoutil.commands.moodle.quiet_hours import quiet_hours_callback
+
+        await quiet_hours_callback(update, context)
 
     elif action == "toggle_permission":
         # Toggle module permission
@@ -345,14 +382,22 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             role_display = "👑 Admin" if user.role == "admin" else "👤 User"
             whitelist_status = "✅ Whitelisted" if user.whitelisted else "❌ Not whitelisted"
 
-            last_activity = (
-                user.last_activity_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-                if user.last_activity_at
-                else "Never"
-            )
-            created_at = (
-                user.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if user.created_at else "Unknown"
-            )
+            # Format timestamps in configured timezone
+            if user.last_activity_at:
+                last_activity_dt = user.last_activity_at
+                if last_activity_dt.tzinfo is None:
+                    last_activity_dt = last_activity_dt.replace(tzinfo=timezone.utc)
+                last_activity = format_time_for_display(last_activity_dt)
+            else:
+                last_activity = "Never"
+
+            if user.created_at:
+                created_at_dt = user.created_at
+                if created_at_dt.tzinfo is None:
+                    created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+                created_at = format_time_for_display(created_at_dt)
+            else:
+                created_at = "Unknown"
 
             text = (
                 f"👤 *User Details*\n\n"
@@ -376,3 +421,9 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
+
+    elif action == "quiet_hours":
+        # Handle quiet hours management
+        from filoutil.commands.moodle.quiet_hours import quiet_hours_callback
+
+        await quiet_hours_callback(update, context)

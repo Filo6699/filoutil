@@ -1,7 +1,7 @@
 """Moodle session management commands."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 from filoutil.auth import require_module_permission
 from filoutil.commands.moodle.menu import format_session_info, get_sessions_list_keyboard
+from filoutil.config import format_time_for_display
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.session_refresh import (
     get_active_sessions_for_user,
@@ -117,15 +118,25 @@ async def show_session_details(
         else session.moodleSession
     )
 
+    # Format timestamps in configured timezone
+    started_at_dt = session.started_at
+    if started_at_dt.tzinfo is None:
+        started_at_dt = started_at_dt.replace(tzinfo=timezone.utc)
+    started_str = format_time_for_display(started_at_dt)
+
     text = (
         f"{status_emoji} *{name}*\n\n"
         f"*Session ID:* `{session.id}`\n"
         f"*Status:* {session.status}\n"
-        f"*Started:* {session.started_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+        f"*Started:* {started_str}\n"
     )
 
     if session.ended_at:
-        text += f"*Ended:* {session.ended_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+        ended_at_dt = session.ended_at
+        if ended_at_dt.tzinfo is None:
+            ended_at_dt = ended_at_dt.replace(tzinfo=timezone.utc)
+        ended_str = format_time_for_display(ended_at_dt)
+        text += f"*Ended:* {ended_str}\n"
 
     text += (
         f"*Duration:* {duration_str}\n"
@@ -286,7 +297,11 @@ async def handle_session_name_input(update: Update, context: ContextTypes.DEFAUL
                 if session.ended_at:
                     duration = session.ended_at - session.started_at
                 else:
-                    duration = datetime.utcnow() - session.started_at
+                    # Ensure started_at is timezone-aware for duration calculation
+                    started_at = session.started_at
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                    duration = datetime.now(timezone.utc) - started_at
 
                 hours, remainder = divmod(int(duration.total_seconds()), 3600)
                 minutes, seconds = divmod(remainder, 60)
@@ -306,16 +321,26 @@ async def handle_session_name_input(update: Update, context: ContextTypes.DEFAUL
                     else session.moodleSession
                 )
 
+                # Format timestamps in configured timezone
+                started_at_dt = session.started_at
+                if started_at_dt.tzinfo is None:
+                    started_at_dt = started_at_dt.replace(tzinfo=timezone.utc)
+                started_str = format_time_for_display(started_at_dt)
+
                 text = (
                     f"✅ *Session name updated!*\n\n"
                     f"{status_emoji} *{name}*\n\n"
                     f"*Session ID:* `{session.id}`\n"
                     f"*Status:* {session.status}\n"
-                    f"*Started:* {session.started_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                    f"*Started:* {started_str}\n"
                 )
 
                 if session.ended_at:
-                    text += f"*Ended:* {session.ended_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                    ended_at_dt = session.ended_at
+                    if ended_at_dt.tzinfo is None:
+                        ended_at_dt = ended_at_dt.replace(tzinfo=timezone.utc)
+                    ended_str = format_time_for_display(ended_at_dt)
+                    text += f"*Ended:* {ended_str}\n"
 
                 text += (
                     f"*Duration:* {duration_str}\n"

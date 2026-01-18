@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import datetime
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -23,6 +23,11 @@ from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
 from filoutil.commands.moodle.add_session import moodle_add_session_command
 from filoutil.commands.moodle.menu import moodle_callback, moodle_menu_command
+from filoutil.commands.moodle.quiet_hours import (
+    moodle_quiet_hours_add_command,
+    moodle_quiet_hours_edit_end_command,
+    moodle_quiet_hours_edit_start_command,
+)
 from filoutil.commands.moodle.sessions import sessions_callback
 from filoutil.commands.notification_settings import (
     handle_blacklist_word_input,
@@ -36,6 +41,7 @@ from filoutil.commands.session_refresh import (
     refresh_settings_command,
 )
 from filoutil.commands.start import start
+from filoutil.config import format_time_for_display
 from filoutil.db.postgres import SessionLocal, init_db
 from filoutil.db.status import get_admins, get_bot_status, update_heartbeat
 from filoutil.db.users import update_user_activity
@@ -72,7 +78,7 @@ async def notify_admins_online(app: Application):
                 return
 
             last_hb = status_rec.last_heartbeat
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             downtime = now - last_hb
 
             reason = status_rec.exit_reason or "Unknown (likely heartbeat timeout)"
@@ -88,10 +94,15 @@ async def notify_admins_online(app: Application):
             minutes, seconds = divmod(remainder, 60)
             downtime_str = f"{hours}h {minutes}m {seconds}s"
 
+            # Ensure last_hb is timezone-aware before formatting
+            if last_hb.tzinfo is None:
+                last_hb = last_hb.replace(tzinfo=timezone.utc)
+            last_seen_str = format_time_for_display(last_hb)
+
             message = (
                 "🚀 *Bot is back online!*\n\n"
                 f"⏱ *Downtime:* {downtime_str}\n"
-                f"📅 *Last seen:* {last_hb.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                f"📅 *Last seen:* {last_seen_str}\n"
                 f"📂 *Previous status:* {status_val}\n"
                 f"📝 *Reason:* {reason}"
             )
@@ -126,6 +137,14 @@ def build_app(token: str) -> Application:
     # Moodle commands
     app.add_handler(CommandHandler("moodle", moodle_menu_command))
     app.add_handler(CommandHandler("moodle_add", moodle_add_session_command))
+    # Quiet hours commands (admin only)
+    app.add_handler(CommandHandler("moodle_quiet_hours_add", moodle_quiet_hours_add_command))
+    app.add_handler(
+        CommandHandler("moodle_quiet_hours_edit_start", moodle_quiet_hours_edit_start_command)
+    )
+    app.add_handler(
+        CommandHandler("moodle_quiet_hours_edit_end", moodle_quiet_hours_edit_end_command)
+    )
     app.add_handler(CallbackQueryHandler(refresh_settings_callback, pattern="^refresh_settings:"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu:"))
     app.add_handler(CallbackQueryHandler(moodle_callback, pattern="^moodle:"))
@@ -139,6 +158,10 @@ def build_app(token: str) -> Application:
     app.add_handler(CommandHandler("db", db_query))
     app.add_handler(CommandHandler("admin", admin_users_command))
     app.add_handler(CallbackQueryHandler(admin_users_callback, pattern="^admin_users:"))
+    # Admin quiet hours callbacks
+    from filoutil.commands.moodle.quiet_hours import quiet_hours_callback
+
+    app.add_handler(CallbackQueryHandler(quiet_hours_callback, pattern="^admin:quiet_hours:"))
 
     # Generic message handler for text input (e.g. monitor edits)
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -160,6 +183,18 @@ def build_app(token: str) -> Application:
         pass
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle unrecognized commands."""
+        if update.message and update.message.text:
+            command_text = update.message.text.split()[0]
+            if command_text.startswith("/"):
+                command = command_text[1:].split("@")[0]
+                await update.message.reply_text(
+                    f"❌ Command `/{command}` is not recognized.\n\n" "Use /menu for the main menu."
+                )
+
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
     app.add_error_handler(on_error)
     return app
 

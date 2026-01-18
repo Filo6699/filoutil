@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -75,7 +75,7 @@ def add_check_run(
     # Update monitor last_check_at and basic status
     monitor = get_monitor(db, monitor_id)
     if monitor:
-        monitor.last_check_at = datetime.utcnow()
+        monitor.last_check_at = datetime.now(timezone.utc)
         # Basic status; sophisticated logic like 'flapping' is handled by the engine
         monitor.status = "up" if is_up else "down"
 
@@ -113,9 +113,9 @@ def get_check_runs_by_time_range(
         List of CheckRun objects ordered by timestamp descending (newest first)
     """
     if hours is not None:
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     elif days is not None:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     else:
         # Default to 24 hours
         cutoff = datetime.utcnow() - timedelta(hours=24)
