@@ -200,48 +200,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             if "Message is not modified" not in str(e):
                 raise
 
-    elif action == "refresh_settings":
-        # Show refresh settings directly
-        from filoutil.commands.session_refresh import get_settings_keyboard
-        from filoutil.db.session_refresh import get_user_refresh_interval
-
-        with SessionLocal() as db:
-            user = get_user_by_telegram_id(db, query.from_user.id)
-            if not user:
-                try:
-                    await query.edit_message_text("❌ User not found.")
-                except BadRequest:
-                    pass
-                return
-
-            current_interval = get_user_refresh_interval(db, user.id)
-            minutes = current_interval // 60
-
-            text = (
-                f"⚙️ *Session Refresh Settings*\n\n"
-                f"*Current refresh interval:* {minutes}m ({current_interval}s)\n\n"
-                f"Select a new interval:"
-            )
-
-            try:
-                if query.message.photo:
-                    await query.message.delete()
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=text,
-                        reply_markup=get_settings_keyboard(current_interval),
-                        parse_mode="Markdown",
-                    )
-                else:
-                    await query.edit_message_text(
-                        text,
-                        reply_markup=get_settings_keyboard(current_interval),
-                        parse_mode="Markdown",
-                    )
-            except BadRequest as e:
-                if "Message is not modified" not in str(e):
-                    raise
-
     elif action == "notifications":
         # Show notifications list
         from filoutil.commands.notifications import show_notifications_list

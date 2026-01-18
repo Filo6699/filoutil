@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 LMS_BASE_URL = "https://lms.astanait.edu.kz"
 LMS_ENDPOINT = "/lib/ajax/service.php"
 MAX_RETRIES = 3
-RETRY_DELAYS = [5, 10, 20]  # Exponential backoff delays in seconds
+RETRY_DELAYS = [3, 5, 10]
 
 
 async def get_session_time_remaining(
@@ -203,27 +203,39 @@ async def run_session_refresh_task(
                     logger.info(f"Retrying in {delay}s...")
                     await asyncio.sleep(delay)
 
-        # If we couldn't get time remaining, use a fallback interval
+        # If we couldn't get time remaining, stop the session
         if not time_remaining_success or time_remaining_seconds is None:
-            logger.warning(
-                f"Session {session_refresh_id} could not get time remaining, using fallback interval"
+            logger.error(
+                f"Session {session_refresh_id} could not get time remaining after {MAX_RETRIES} attempts, stopping"
             )
-            # Use the configured refresh interval as fallback, but check more frequently
+
             with SessionLocal() as db:
-                session_refresh = db.execute(
-                    select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
-                ).scalar_one_or_none()
-                if session_refresh:
-                    # Use a shorter interval to retry getting time remaining
-                    fallback_interval = min(session_refresh.refresh_interval_s, 60)
-                    logger.info(
-                        f"Session {session_refresh_id} using fallback interval: {fallback_interval}s"
+                stopped_session = stop_session_refresh(db, session_refresh_id, status="failed")
+
+                if stopped_session:
+                    # Calculate and format duration
+                    duration_seconds = stopped_session.duration_seconds or 0
+                    hours, remainder = divmod(duration_seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+
+                    duration_str = f"{hours}h {minutes}m {seconds}s"
+
+                    # Notify user
+                    message = (
+                        f"❌ *Session Refresh Stopped*\n\n"
+                        f"Your LMS session refresh has stopped because we couldn't determine when the session expires.\n\n"
+                        f"*Total session duration:* {duration_str}\n"
+                        f"*Error:* `{time_remaining_error or 'Failed to get time remaining'}`"
                     )
-                    await asyncio.sleep(fallback_interval)
-                    continue
-                else:
-                    logger.info(f"Session {session_refresh_id} no longer exists, stopping")
-                    break
+
+                    try:
+                        await app.bot.send_message(
+                            chat_id=user_telegram_id, text=message, parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify user {user_telegram_id}: {e}")
+
+            break
 
         # Calculate when to refresh (30 seconds before expiration)
         if time_remaining_seconds <= 0:
@@ -273,94 +285,6 @@ async def run_session_refresh_task(
                 logger.info(
                     f"Session {session_refresh_id} refreshed successfully (attempt {attempt + 1})"
                 )
-
-                # Get debug data and send notification
-                try:
-                    # Get time remaining after refresh for debug info
-                    time_remaining_success, time_remaining_seconds_after, time_remaining_error = (
-                        await get_session_time_remaining(sesskey, moodleSession)
-                    )
-
-                    # Get session data from DB
-                    with SessionLocal() as db:
-                        session_refresh = db.execute(
-                            select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
-                        ).scalar_one_or_none()
-
-                        if session_refresh:
-                            # Calculate session duration
-                            started_at = session_refresh.started_at
-                            if started_at.tzinfo is None:
-                                started_at = started_at.replace(tzinfo=timezone.utc)
-                            duration = datetime.now(timezone.utc) - started_at
-                            duration_seconds = int(duration.total_seconds())
-                            hours, remainder = divmod(duration_seconds, 3600)
-                            minutes, seconds = divmod(remainder, 60)
-
-                            if hours > 0:
-                                duration_str = f"{hours}h {minutes}m {seconds}s"
-                            elif minutes > 0:
-                                duration_str = f"{minutes}m {seconds}s"
-                            else:
-                                duration_str = f"{seconds}s"
-
-                            # Build notification message with debug data
-                            session_name = session_refresh.name or f"Session {session_refresh_id}"
-                            message = (
-                                f"✅ *Session Prolonged*\n\n"
-                                f"*Session:* {session_name}\n"
-                                f"*Session ID:* `{session_refresh_id}`\n"
-                                f"*Duration:* {duration_str}\n"
-                            )
-
-                            # Add time remaining if available
-                            if time_remaining_success and time_remaining_seconds_after is not None:
-                                hours_remaining, remainder_remaining = divmod(
-                                    time_remaining_seconds_after, 3600
-                                )
-                                minutes_remaining, seconds_remaining = divmod(
-                                    remainder_remaining, 60
-                                )
-
-                                if hours_remaining > 0:
-                                    time_remaining_str = f"{hours_remaining}h {minutes_remaining}m {seconds_remaining}s"
-                                elif minutes_remaining > 0:
-                                    time_remaining_str = (
-                                        f"{minutes_remaining}m {seconds_remaining}s"
-                                    )
-                                else:
-                                    time_remaining_str = f"{seconds_remaining}s"
-
-                                message += f"*Time Remaining:* {time_remaining_str} ({time_remaining_seconds_after}s)\n"
-                            else:
-                                message += f"*Time Remaining:* Unable to fetch ({time_remaining_error or 'Unknown error'})\n"
-
-                            # Add debug info
-                            message += (
-                                f"\n*Debug Info:*\n"
-                                f"• Refresh attempt: {attempt + 1}\n"
-                                f"• Time remaining before refresh: {time_remaining_seconds}s\n"
-                                f"• Moodle User ID: {session_refresh.moodle_user_id or 'N/A'}\n"
-                                f"• Session started: {started_at.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-                                f"• Refresh before expiry: {REFRESH_BEFORE_EXPIRY_S}s\n"
-                            )
-
-                            # Send notification
-                            try:
-                                await app.bot.send_message(
-                                    chat_id=user_telegram_id,
-                                    text=message,
-                                    parse_mode="Markdown",
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to send refresh notification to user {user_telegram_id}: {e}"
-                                )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to get debug data for session {session_refresh_id}: {e}"
-                    )
-
                 break
             else:
                 last_error = error_msg

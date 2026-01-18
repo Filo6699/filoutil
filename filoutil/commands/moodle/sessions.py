@@ -138,11 +138,7 @@ async def show_session_details(
         ended_str = format_time_for_display(ended_at_dt)
         text += f"*Ended:* {ended_str}\n"
 
-    text += (
-        f"*Duration:* {duration_str}\n"
-        f"*Refresh Interval:* {session.refresh_interval_s // 60}m ({session.refresh_interval_s}s)\n"
-        f"*Moodle Session:* `{moodle_session_preview}`\n"
-    )
+    text += f"*Duration:* {duration_str}\n" f"*Moodle Session:* `{moodle_session_preview}`\n"
 
     if session.moodle_user_id:
         text += f"*Moodle User ID:* {session.moodle_user_id}\n"
@@ -344,7 +340,6 @@ async def handle_session_name_input(update: Update, context: ContextTypes.DEFAUL
 
                 text += (
                     f"*Duration:* {duration_str}\n"
-                    f"*Refresh Interval:* {session.refresh_interval_s // 60}m ({session.refresh_interval_s}s)\n"
                     f"*Moodle Session:* `{moodle_session_preview}`\n"
                 )
 

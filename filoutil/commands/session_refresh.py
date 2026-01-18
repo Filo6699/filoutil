@@ -164,9 +164,8 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         )
         await update.message.reply_text(
             f"✅ Session refresh started!\n\n"
-            f"*Refresh interval:* {refresh_interval}s ({refresh_interval // 60}m)\n"
             f"*Session ID:* {session_refresh.id}\n\n"
-            f"Use `/refresh_settings` to configure the refresh interval.",
+            f"The session will be automatically refreshed based on Moodle's session expiry time.",
             reply_markup=keyboard,
             parse_mode="Markdown",
         )

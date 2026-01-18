@@ -31,6 +31,7 @@ from filoutil.commands.moodle.quiet_hours import (
 from filoutil.commands.moodle.sessions import sessions_callback
 from filoutil.commands.notification_settings import (
     handle_blacklist_word_input,
+    handle_custom_interval_input,
     notification_settings_callback,
     notification_settings_command,
 )
@@ -173,6 +174,8 @@ def build_app(token: str) -> Application:
         if await handle_monitor_edit_input(update, context):
             return
         if await handle_blacklist_word_input(update, context):
+            return
+        if await handle_custom_interval_input(update, context):
             return
         # Handle session name editing
         from filoutil.commands.moodle.sessions import handle_session_name_input

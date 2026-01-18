@@ -149,8 +149,8 @@ async def moodle_add_session_command(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(
             f"✅ *Moodle Session Added!*\n\n"
             f"*Name:* {display_name}\n"
-            f"*Session ID:* {session_refresh.id}\n"
-            f"*Refresh interval:* {refresh_interval // 60}m ({refresh_interval}s)\n\n"
+            f"*Session ID:* {session_refresh.id}\n\n"
+            f"The session will be automatically refreshed based on Moodle's session expiry time.\n\n"
             f"You now have {len(active_sessions) + 1} active session(s).",
             reply_markup=keyboard,
             parse_mode="Markdown",

@@ -85,7 +85,6 @@ def get_moodle_menu_keyboard(user_role: str = "user") -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔔 Notifications", callback_data="moodle:notifications")],
         [InlineKeyboardButton("📊 Grades", callback_data="moodle:grades")],
         [
-            InlineKeyboardButton("⚙️ Refresh Settings", callback_data="moodle:refresh_settings"),
             InlineKeyboardButton(
                 "⚙️ Notification Settings", callback_data="moodle:notification_settings"
             ),
@@ -189,7 +188,6 @@ def format_session_info(session, index: int = None) -> str:
         f"   ID: `{session.id}`\n"
         f"   Status: {session.status}\n"
         f"   Duration: {duration_str}\n"
-        f"   Refresh: {session.refresh_interval_s // 60}m\n"
         f"   Session: `{moodle_session_preview}`"
     )
 
@@ -698,53 +696,6 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             try:
                 await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
-            except BadRequest as e:
-                if "Message is not modified" not in str(e):
-                    raise
-
-    elif action == "refresh_settings":
-        # Show refresh settings
-        from filoutil.commands.session_refresh import get_settings_keyboard
-
-        with SessionLocal() as db:
-            user = get_user_by_telegram_id(db, query.from_user.id)
-            if not user:
-                try:
-                    await query.edit_message_text("❌ User not found.")
-                except BadRequest:
-                    pass
-                return
-
-            current_interval = get_user_refresh_interval(db, user.id)
-            minutes = current_interval // 60
-
-            text = (
-                f"⚙️ *Session Refresh Settings*\n\n"
-                f"*Current refresh interval:* {minutes}m ({current_interval}s)\n\n"
-                f"Select a new interval:"
-            )
-
-            keyboard = get_settings_keyboard(current_interval)
-            # Replace back button - convert tuple to list, modify, then create new keyboard
-            keyboard_list = list(keyboard.inline_keyboard)
-            keyboard_list[-1] = [
-                InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")
-            ]
-            keyboard = InlineKeyboardMarkup(keyboard_list)
-
-            try:
-                if query.message.photo:
-                    await query.message.delete()
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=text,
-                        reply_markup=keyboard,
-                        parse_mode="Markdown",
-                    )
-                else:
-                    await query.edit_message_text(
-                        text, reply_markup=keyboard, parse_mode="Markdown"
-                    )
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
