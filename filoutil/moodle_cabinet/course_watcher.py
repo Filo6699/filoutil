@@ -23,6 +23,7 @@ from filoutil.db.moodle_courses import (
     upsert_grade,
 )
 from filoutil.db.postgres import SessionLocal
+from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -569,9 +570,33 @@ async def process_courses_for_user(
     try:
         moodle_user_id = session_refresh.moodle_user_id
 
+        # If not stored, try to fetch it now (fallback for sessions created before this fix)
         if not moodle_user_id:
-            logger.warning(f"Could not determine Moodle user ID for user {user_id}")
-            return {"grades_changed": 0, "grades_unchanged": 0}
+            logger.info(f"Moodle user ID not found for user {user_id}, attempting to fetch...")
+            success, fetched_user_id, error_msg = await fetch_moodle_user_id(
+                session_refresh.sesskey, session_refresh.moodleSession
+            )
+            if success and fetched_user_id:
+                moodle_user_id = fetched_user_id
+                # Store it in the session refresh
+                with SessionLocal() as db:
+                    stored_session = db.execute(
+                        select(SessionRefresh).where(SessionRefresh.id == session_refresh.id)
+                    ).scalar_one_or_none()
+                    if stored_session:
+                        stored_session.moodle_user_id = moodle_user_id
+                        db.commit()
+                        db.refresh(stored_session)
+                        # Update the passed session_refresh object
+                        session_refresh.moodle_user_id = moodle_user_id
+                        logger.info(
+                            f"Successfully fetched and stored Moodle user ID {moodle_user_id} for session {session_refresh.id}"
+                        )
+            else:
+                logger.warning(
+                    f"Could not determine Moodle user ID for user {user_id}: {error_msg}"
+                )
+                return {"grades_changed": 0, "grades_unchanged": 0}
 
         # Fetch courses from Moodle
         success, courses_data, error_msg = await fetch_user_courses(
