@@ -248,10 +248,12 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not await require_module_permission(update, context, "moodle"):
         return
 
-    await query.answer()
-
     data = query.data.split(":")
     action = data[1]
+
+    # Answer callback early for most actions, but let stop_session answer itself with a message
+    if action != "stop_session":
+        await query.answer()
 
     if action == "menu":
         await show_moodle_menu(query, context)
@@ -820,16 +822,21 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.answer("❌ Invalid request.", show_alert=True)
             return
 
-        with SessionLocal() as db:
-            user = get_user_by_telegram_id(db, query.from_user.id)
-            if not user:
-                try:
-                    await query.edit_message_text("❌ User not found.")
-                except BadRequest:
-                    pass
-                return
+        try:
+            with SessionLocal() as db:
+                user = get_user_by_telegram_id(db, query.from_user.id)
+                if not user:
+                    try:
+                        await query.edit_message_text("❌ User not found.")
+                    except BadRequest:
+                        pass
+                    await query.answer("❌ User not found.", show_alert=True)
+                    return
 
-            await stop_session_callback(db, user.id, session_id, query, context)
+                await stop_session_callback(db, user.id, session_id, query, context)
+        except Exception as e:
+            logger.error(f"Error stopping session: {e}", exc_info=True)
+            await query.answer("❌ Failed to stop session. Please try again.", show_alert=True)
 
     elif action == "edit_name":
         # Handle editing session name
