@@ -235,6 +235,9 @@ async def fetch_course_grades(
                         # Extract grade from grade column
                         grade_cell = row.find("td", class_=re.compile(r"column-grade\b"))
                         grade_text = grade_cell.get_text(strip=True) if grade_cell else "-"
+                        # Strip "Grade analysis" text if present
+                        if grade_text and "Grade analysis" in grade_text:
+                            grade_text = grade_text.replace("Grade analysis", "").strip()
                         grade_raw = None
                         grade_formatted = grade_text if grade_text != "-" else None
                         if grade_formatted:
@@ -507,7 +510,7 @@ async def send_grade_notification(
         grade_date_graded = grade_data.get("gradedategraded")
 
         # Format date graded
-        date_str = "Unknown"
+        date_str = None
         if grade_date_graded is not None and grade_date_graded > 0:
             try:
                 date_obj = datetime.fromtimestamp(grade_date_graded)
@@ -529,7 +532,9 @@ async def send_grade_notification(
         else:
             message += f"*Grade:* {old_grade} → {new_grade}\n"
 
-        message += f"*Date Graded:* {date_str}\n"
+        # Only include date graded if it's available
+        if date_str:
+            message += f"*Date Graded:* {date_str}\n"
 
         # Add course URL
         gradebook_url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course.course_id}"
