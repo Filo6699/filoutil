@@ -284,11 +284,23 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         raise
 
         elif action == "view":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             await _show_monitor_view(db, query, context, m_id)
 
         elif action == "refresh":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             monitor = get_monitor(db, m_id)
             if monitor:
                 back_kb = InlineKeyboardMarkup(
@@ -314,7 +326,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await _show_monitor_view(db, query, context, m_id)
 
         elif action == "delete_confirm":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             monitor = get_monitor(db, m_id)
             keyboard = [
                 [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"mon:delete_final:{m_id}")],
@@ -331,7 +349,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     raise
 
         elif action == "delete_final":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             delete_monitor(db, m_id)
             try:
                 await query.edit_message_text("✅ Monitor deleted.")
@@ -347,12 +371,26 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     raise
 
         elif action == "edit_menu":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             await _show_edit_menu(db, query, m_id)
 
         elif action == "edit":
-            m_id = int(data[2])
-            field = data[3]
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+                if len(data) < 4:
+                    raise IndexError("Missing field name")
+                field = data[3]
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             monitor = get_monitor(db, m_id)
             if not monitor:
                 return
@@ -397,7 +435,13 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     raise
 
         elif action == "stats":
-            m_id = int(data[2])
+            try:
+                m_id = int(data[2])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
 
             user = get_user_by_telegram_id(db, query.from_user.id)
             default_range = (
@@ -505,8 +549,16 @@ async def monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await _show_monitor_view(db, query, context, m_id)
 
         elif action == "set_default_range":
-            new_range = data[2]
-            m_id = int(data[3])
+            try:
+                if len(data) < 4:
+                    raise IndexError("Missing parameters")
+                new_range = data[2]
+                m_id = int(data[3])
+                if m_id <= 0:
+                    raise ValueError("Invalid monitor ID")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
             user = get_user_by_telegram_id(db, query.from_user.id)
             if user:
                 settings = dict(user.settings) if user.settings else {}

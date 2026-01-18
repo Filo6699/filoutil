@@ -158,12 +158,20 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.answer("❌ This command is only available to admins.", show_alert=True)
             return
 
+    await query.answer()
+
     data = query.data.split(":")
     action = data[1]
 
     if action == "list":
         # Show user list
-        page = int(data[2]) if len(data) > 2 else 0
+        try:
+            page = int(data[2]) if len(data) > 2 else 0
+            if page < 0:
+                raise ValueError("Invalid page number")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
+            return
 
         with SessionLocal() as db:
             from sqlalchemy import select
@@ -206,7 +214,13 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif action == "view":
         # Show user details
-        user_id = int(data[2])
+        try:
+            user_id = int(data[2])
+            if user_id <= 0:
+                raise ValueError("Invalid user ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
+            return
 
         with SessionLocal() as db:
             from filoutil.db.models import User
@@ -272,7 +286,13 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif action == "toggle_whitelist":
         # Toggle whitelist status
-        user_id = int(data[2])
+        try:
+            user_id = int(data[2])
+            if user_id <= 0:
+                raise ValueError("Invalid user ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
+            return
 
         with SessionLocal() as db:
             from filoutil.db.models import User
@@ -346,8 +366,16 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif action == "toggle_permission":
         # Toggle module permission
-        user_id = int(data[2])
-        module = data[3]
+        try:
+            user_id = int(data[2])
+            if user_id <= 0:
+                raise ValueError("Invalid user ID")
+            if len(data) < 4:
+                raise IndexError("Missing module name")
+            module = data[3]
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
+            return
 
         if module not in ["monitoring", "moodle"]:
             await query.answer("❌ Invalid module.", show_alert=True)

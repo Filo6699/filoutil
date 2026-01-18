@@ -3,9 +3,13 @@ from sqlalchemy.orm import Session
 
 from filoutil.db.models import UserPermission
 
+ALLOWED_MODULES = {"monitoring", "moodle"}
+
 
 def has_permission(db: Session, user_id: int, module: str) -> bool:
     """Check if a user has permission for a specific module."""
+    if module not in ALLOWED_MODULES:
+        return False
     result = db.execute(
         select(UserPermission).where(
             UserPermission.user_id == user_id, UserPermission.module == module
@@ -18,6 +22,8 @@ def grant_permission(
     db: Session, user_id: int, module: str, granted_by: int | None = None
 ) -> UserPermission:
     """Grant a permission to a user. Returns the permission object."""
+    if module not in ALLOWED_MODULES:
+        raise ValueError(f"Invalid module: {module}. Allowed modules: {ALLOWED_MODULES}")
     # Check if permission already exists
     existing = db.execute(
         select(UserPermission).where(
