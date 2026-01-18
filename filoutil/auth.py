@@ -29,8 +29,13 @@ async def ensure_user_and_check_whitelisted(
     username = telegram_user.username
 
     with SessionLocal() as db:
-        ensure_user_by_telegram_id(db, telegram_id, username)
-        user = get_user_by_telegram_id(db, telegram_id)
+        user, is_new = ensure_user_by_telegram_id(db, telegram_id, username)
+
+        # Notify admins if this is a new user
+        if is_new:
+            from filoutil.notifications.admin import notify_admins_new_user
+
+            await notify_admins_new_user(context.bot, telegram_id, username)
 
         # Track activity
         if user:
@@ -48,7 +53,7 @@ async def ensure_user_and_check_whitelisted(
             await update.message.reply_text(
                 "You're not whitelisted yet.\n\n"
                 f"Your Telegram ID is: {telegram_id}\n"
-                "Ask an admin to whitelist you, then try again."
+                "Wait for an admin to whitelist you, then try again."
             )
             return False
 
@@ -86,7 +91,8 @@ async def require_module_permission(
 
             if not user.whitelisted:
                 await update.callback_query.answer(
-                    "You're not whitelisted yet. Ask an admin to whitelist you.", show_alert=True
+                    "You're not whitelisted yet. Wait for an admin to whitelist you.",
+                    show_alert=True,
                 )
                 return False
 
