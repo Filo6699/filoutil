@@ -204,22 +204,22 @@ def format_gradebook(course_name: str, grades: list) -> str:
 
     # Add course total and GPA if available
     if course_total is not None:
-        text += f"*TOTAL* → `{course_total}`\n"
+        text += f"*TOTAL* → {course_total}\n"
     if gpa is not None:
-        text += f"*GPA* → `{gpa}`\n"
+        text += f"*GPA* → {gpa}\n"
 
     if course_total is not None or gpa is not None:
         text += "\n"
 
     # Always show register fields (even if empty, but we skip empty ones)
     if register_midterm:
-        text += f"`{register_midterm[0]}` → `{register_midterm[1]}`\n"
+        text += f"{register_midterm[0]} → {register_midterm[1]}\n"
     if register_endterm:
-        text += f"`{register_endterm[0]}` → `{register_endterm[1]}`\n"
+        text += f"{register_endterm[0]} → {register_endterm[1]}\n"
     if register_term:
-        text += f"`{register_term[0]}` → `{register_term[1]}`\n"
+        text += f"{register_term[0]} → {register_term[1]}\n"
     if register_final:
-        text += f"`{register_final[0]}` → `{register_final[1]}`\n"
+        text += f"{register_final[0]} → {register_final[1]}\n"
 
     # Add spacing before attendance
     if register_midterm or register_endterm or register_term or register_final:
@@ -227,21 +227,21 @@ def format_gradebook(course_name: str, grades: list) -> str:
 
     # Attendance
     if attendance:
-        text += f"`{attendance[0]}` → `{attendance[1]}`\n"
+        text += f"{attendance[0]} → {attendance[1]}\n"
 
     # Add spacing before assignments if there are any
     if assignments:
         text += "\n"
         # Add assignments
         for item_name, grade_display in assignments:
-            text += f"`{item_name}` → `{grade_display}`\n"
+            text += f"{item_name} → {grade_display}\n"
 
     # Add other grades if any
     if other_grades:
         if assignments:
             text += "\n"
         for item_name, grade_display in other_grades:
-            text += f"`{item_name}` → `{grade_display}`\n"
+            text += f"{item_name} → {grade_display}\n"
 
     return text
 
