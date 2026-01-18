@@ -29,12 +29,15 @@ DEFAULT_NOTIFICATION_SETTINGS = {
 }
 
 CHECK_INTERVAL_OPTIONS = {
-    "60": 60,  # 1 minute
     "300": 300,  # 5 minutes
-    "600": 600,  # 10 minutes
+    "900": 900,  # 15 minutes
     "1800": 1800,  # 30 minutes
     "3600": 3600,  # 1 hour
 }
+
+# Validation constraints for check interval
+MIN_CHECK_INTERVAL_S = 300  # Minimum 1 minute
+MAX_CHECK_INTERVAL_S = 86400  # Maximum 24 hours (1 day)
 
 
 def get_notification_settings_keyboard(settings: dict) -> InlineKeyboardMarkup:
@@ -134,8 +137,32 @@ def get_interval_keyboard(current_interval: int) -> InlineKeyboardMarkup:
             )
         )
 
+    # Check if current interval is one of the predefined options
+    is_custom = current_interval not in CHECK_INTERVAL_OPTIONS.values()
+    if is_custom:
+        # Show current custom interval
+        minutes = current_interval // 60
+        if minutes < 60:
+            label_text = f"{minutes}m"
+        else:
+            hours = minutes // 60
+            label_text = f"{hours}h"
+        buttons.append(
+            InlineKeyboardButton(
+                f"◉ Custom: {label_text} ({current_interval}s)",
+                callback_data="notif_settings:interval:custom",
+            )
+        )
+
     # Arrange buttons in rows (2 per row for compact display)
     keyboard = arrange_buttons_in_rows(buttons, buttons_per_row=2)
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                "✏️ Enter Custom Interval", callback_data="notif_settings:interval:custom"
+            )
+        ]
+    )
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="notif_settings:main")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -191,6 +218,81 @@ async def show_word_blacklist_menu(
     except BadRequest as e:
         if "Message is not modified" not in str(e):
             raise
+
+
+async def handle_custom_interval_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle text input for custom check interval."""
+    if not update.message or not update.message.text:
+        return False
+
+    user_id = context.user_data.get("custom_interval_user_id")
+    if not user_id:
+        return False
+
+    # Check if user canceled
+    if update.message.text.strip().lower() in ["/cancel", "cancel"]:
+        context.user_data.pop("custom_interval_user_id", None)
+        await update.message.reply_text("❌ Cancelled setting custom interval.")
+        return True
+
+    try:
+        # Try to parse as integer (seconds)
+        interval_input = update.message.text.strip()
+        interval_seconds = int(interval_input)
+
+        # Validate interval
+        if interval_seconds < MIN_CHECK_INTERVAL_S:
+            await update.message.reply_text(
+                f"❌ Interval too short. Minimum is {MIN_CHECK_INTERVAL_S // 60} minute(s) ({MIN_CHECK_INTERVAL_S}s)."
+            )
+            return True
+
+        if interval_seconds > MAX_CHECK_INTERVAL_S:
+            await update.message.reply_text(
+                f"❌ Interval too long. Maximum is {MAX_CHECK_INTERVAL_S // 3600} hour(s) ({MAX_CHECK_INTERVAL_S}s)."
+            )
+            return True
+
+        # Save the interval
+        with SessionLocal() as db:
+            settings = get_user_notification_settings(db, user_id)
+            settings["check_interval_s"] = interval_seconds
+            save_user_notification_settings(db, user_id, settings)
+
+        context.user_data.pop("custom_interval_user_id", None)
+
+        # Format confirmation message
+        minutes = interval_seconds // 60
+        if minutes < 60:
+            interval_str = f"{minutes}m"
+        else:
+            hours = minutes // 60
+            remainder_minutes = minutes % 60
+            if remainder_minutes > 0:
+                interval_str = f"{hours}h {remainder_minutes}m"
+            else:
+                interval_str = f"{hours}h"
+
+        await update.message.reply_text(
+            f"✅ Check interval set to {interval_str} ({interval_seconds}s).\n\n"
+            f"Notifications will be checked every {interval_str}.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid input. Please enter a number (in seconds).\n\n"
+            f"Example: `300` for 5 minutes, `3600` for 1 hour\n\n"
+            f"Minimum: {MIN_CHECK_INTERVAL_S // 60}m ({MIN_CHECK_INTERVAL_S}s)\n"
+            f"Maximum: {MAX_CHECK_INTERVAL_S // 3600}h ({MAX_CHECK_INTERVAL_S}s)",
+            parse_mode="Markdown",
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error setting custom interval: {e}", exc_info=True)
+        await update.message.reply_text("❌ An error occurred while setting the interval.")
+        return True
 
 
 async def handle_blacklist_word_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -392,7 +494,12 @@ async def notification_settings_callback(
             sub_action = data[2]
             if sub_action == "menu":
                 current_interval = settings.get("check_interval_s", 300)
-                text = "⏱ *Check Interval*\n\nSelect how often to check for new notifications:"
+                text = (
+                    "⏱ *Check Interval*\n\n"
+                    "Select how often to check for new notifications:\n\n"
+                    f"*Current:* {current_interval // 60}m ({current_interval}s)\n"
+                    f"*Range:* {MIN_CHECK_INTERVAL_S // 60}m - {MAX_CHECK_INTERVAL_S // 3600}h"
+                )
                 keyboard = get_interval_keyboard(current_interval)
                 try:
                     await query.edit_message_text(
@@ -403,11 +510,37 @@ async def notification_settings_callback(
                         raise
             elif sub_action == "set":
                 interval = int(data[3])
+                # Validate interval
+                if interval < MIN_CHECK_INTERVAL_S or interval > MAX_CHECK_INTERVAL_S:
+                    await query.answer(
+                        f"❌ Interval must be between {MIN_CHECK_INTERVAL_S // 60}m and {MAX_CHECK_INTERVAL_S // 3600}h",
+                        show_alert=True,
+                    )
+                    return
+
                 settings["check_interval_s"] = interval
                 save_user_notification_settings(db, user.id, settings)
                 minutes = interval // 60
                 await query.answer(f"✅ Check interval set to {minutes}m ({interval}s)")
                 await show_notification_settings(query, context, settings)
+            elif sub_action == "custom":
+                # Store user_id in context for text input handler
+                context.user_data["custom_interval_user_id"] = user.id
+                current_interval = settings.get("check_interval_s", 300)
+                await query.edit_message_text(
+                    "⏱ *Enter Custom Check Interval*\n\n"
+                    "Send me the interval in seconds (as a number).\n\n"
+                    f"*Examples:*\n"
+                    f"• `300` = 5 minutes\n"
+                    f"• `900` = 15 minutes\n"
+                    f"• `3600` = 1 hour\n"
+                    f"• `7200` = 2 hours\n\n"
+                    f"*Current interval:* {current_interval // 60}m ({current_interval}s)\n\n"
+                    f"*Valid range:* {MIN_CHECK_INTERVAL_S // 60}m - {MAX_CHECK_INTERVAL_S // 3600}h\n"
+                    f"({MIN_CHECK_INTERVAL_S}s - {MAX_CHECK_INTERVAL_S}s)\n\n"
+                    "Send /cancel to cancel.",
+                    parse_mode="Markdown",
+                )
 
         elif action == "max_batch":
             sub_action = data[2]
