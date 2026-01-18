@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from telegram.ext import Application
 
@@ -24,7 +24,7 @@ async def monitoring_task(app: Application):
         try:
             with SessionLocal() as db:
                 monitors = get_enabled_monitors(db)
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
 
                 tasks = []
                 for monitor in monitors:
@@ -33,7 +33,12 @@ async def monitoring_task(app: Application):
                     if not monitor.last_check_at:
                         should_run = True
                     else:
-                        elapsed = (now - monitor.last_check_at).total_seconds()
+                        # Ensure last_check_at is timezone-aware for comparison
+                        last_check = monitor.last_check_at
+                        if last_check.tzinfo is None:
+                            last_check = last_check.replace(tzinfo=timezone.utc)
+
+                        elapsed = (now - last_check).total_seconds()
                         if elapsed >= monitor.interval_s:
                             should_run = True
 

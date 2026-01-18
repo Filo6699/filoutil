@@ -370,7 +370,7 @@ def mark_notification_sent(db: Session, notification_id: int) -> MoodleNotificat
 
     if notification:
         notification.sent_to_user = True
-        notification.sent_at = datetime.utcnow()
+        notification.sent_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(notification)
 

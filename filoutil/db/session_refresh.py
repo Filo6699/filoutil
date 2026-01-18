@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,7 +71,7 @@ def stop_session_refresh(
     ).scalar_one_or_none()
 
     if session_refresh:
-        session_refresh.ended_at = datetime.utcnow()
+        session_refresh.ended_at = datetime.now(timezone.utc)
         session_refresh.status = status
 
         # Calculate duration in seconds

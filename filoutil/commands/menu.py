@@ -3,6 +3,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 
 from filoutil.auth import ensure_user_and_check_whitelisted
 from filoutil.db.postgres import SessionLocal
@@ -12,7 +13,9 @@ from filoutil.db.users import get_user_by_telegram_id
 logger = logging.getLogger(__name__)
 
 
-def get_main_menu_keyboard(user_permissions: list[str] = None) -> InlineKeyboardMarkup:
+def get_main_menu_keyboard(
+    user_permissions: list[str] = None, user_role: str = "user"
+) -> InlineKeyboardMarkup:
     """Generate the main menu keyboard based on user permissions."""
     keyboard = []
 
@@ -23,6 +26,10 @@ def get_main_menu_keyboard(user_permissions: list[str] = None) -> InlineKeyboard
     # Add Moodle button only if user has moodle permission
     if user_permissions and "moodle" in user_permissions:
         keyboard.append([InlineKeyboardButton("🎓 Moodle", callback_data="menu:moodle")])
+
+    # Add Admin button only if user is an admin
+    if user_role == "admin":
+        keyboard.append([InlineKeyboardButton("👑 Admin", callback_data="menu:admin")])
 
     return InlineKeyboardMarkup(keyboard)
 
@@ -60,7 +67,9 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             text = f"🏠 *Main Menu*\n\n" f"Welcome! Choose an option from the menu below."
 
         await update.message.reply_text(
-            text, reply_markup=get_main_menu_keyboard(user_permissions), parse_mode="Markdown"
+            text,
+            reply_markup=get_main_menu_keyboard(user_permissions, user.role),
+            parse_mode="Markdown",
         )
 
 
@@ -98,13 +107,13 @@ async def show_main_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=text,
-                    reply_markup=get_main_menu_keyboard(user_permissions),
+                    reply_markup=get_main_menu_keyboard(user_permissions, user.role),
                     parse_mode="Markdown",
                 )
             else:
                 await query.edit_message_text(
                     text,
-                    reply_markup=get_main_menu_keyboard(user_permissions),
+                    reply_markup=get_main_menu_keyboard(user_permissions, user.role),
                     parse_mode="Markdown",
                 )
         except BadRequest as e:
@@ -277,6 +286,56 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         from filoutil.commands.moodle.menu import show_moodle_menu
 
         await show_moodle_menu(query, context)
+
+    elif action == "admin":
+        # Check if user is admin
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user or user.role != "admin":
+                await query.answer("❌ This command is only available to admins.", show_alert=True)
+                return
+
+        # Show admin panel - directly show the user list
+        from sqlalchemy import select
+
+        from filoutil.commands.admin_users import USERS_PER_PAGE, get_user_list_keyboard
+        from filoutil.db.models import User
+
+        with SessionLocal() as db:
+            users = db.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+
+            if not users:
+                try:
+                    await query.edit_message_text("No users found.")
+                except BadRequest:
+                    pass
+                return
+
+            total_users = len(users)
+            page = 0
+            total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
+
+            text = f"👥 *Admin Panel*\n\n*Total Users:* {total_users}\n\n*Page {page + 1} of {total_pages}*\n\n"
+
+            start_idx = page * USERS_PER_PAGE
+            end_idx = start_idx + USERS_PER_PAGE
+            page_users = users[start_idx:end_idx]
+
+            for user_item in page_users:
+                username_display = escape_markdown(user_item.username or "No username", version=1)
+                whitelist_status = "✅" if user_item.whitelisted else "❌"
+                role_display = "👑 Admin" if user_item.role == "admin" else "👤 User"
+                text += f"{whitelist_status} {role_display}: {username_display}\n"
+
+            reply_markup = get_user_list_keyboard(users, page=page)
+
+            try:
+                await query.edit_message_text(
+                    text, reply_markup=reply_markup, parse_mode="Markdown"
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
     elif action == "main":
         await show_main_menu(query, context)

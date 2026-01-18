@@ -6,6 +6,8 @@ from typing import List
 
 from PIL import Image, ImageDraw, ImageFont
 
+from filoutil.config import format_time_for_display, get_current_time
+
 logger = logging.getLogger(__name__)
 
 # Color palette - dark theme
@@ -352,8 +354,8 @@ async def generate_dashboard_chart(monitors_data: list) -> io.BytesIO:
 
     # Draw header
     draw.text((20, 15), "Service Dashboard", fill=COLORS["text"], font=font_title)
-    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    draw.text((total_width - 200, 25), now_str, fill=COLORS["text_dim"], font=font_small)
+    now_str = format_time_for_display(get_current_time())
+    draw.text((total_width - 250, 25), now_str, fill=COLORS["text_dim"], font=font_small)
 
     for i, data in enumerate(monitors_data):
         row = i // cols

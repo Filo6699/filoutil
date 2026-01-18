@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time, timezone
 
 from sqlalchemy import (
     JSON,
@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -30,9 +31,13 @@ class User(Base):
     moodle_session_agreement: Mapped[bool] = mapped_column(Boolean, default=False)
     moodle_student_confirmation: Mapped[bool] = mapped_column(Boolean, default=False)
     last_activity_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # Relationships
@@ -56,11 +61,15 @@ class BotStatus(Base):
     __tablename__ = "bot_status"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_heartbeat: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     status: Mapped[str] = mapped_column(String, default="online")  # online, offline, crashed
     exit_reason: Mapped[str] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -85,9 +94,13 @@ class Monitor(Base):
     last_check_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String, default="unknown")  # up, down, flapping
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # Relationships
@@ -104,7 +117,9 @@ class CheckRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     monitor_id: Mapped[int] = mapped_column(ForeignKey("monitors.id", ondelete="CASCADE"))
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
 
     is_up: Mapped[bool] = mapped_column(Boolean)
     latency_ms: Mapped[float] = mapped_column(Float)
@@ -122,7 +137,9 @@ class Incident(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     monitor_id: Mapped[int] = mapped_column(ForeignKey("monitors.id", ondelete="CASCADE"))
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     last_error: Mapped[str] = mapped_column(String, nullable=True)
@@ -145,7 +162,9 @@ class SessionRefresh(Base):
     name: Mapped[str] = mapped_column(
         String, nullable=True
     )  # Optional name/description for the session
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="running")  # running, stopped, failed
@@ -161,7 +180,9 @@ class UserPermission(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     module: Mapped[str] = mapped_column(String)  # "monitoring" or "moodle"
-    granted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     granted_by: Mapped[int] = mapped_column(BigInteger, nullable=True)  # admin telegram_id
 
     # Relationships
@@ -203,9 +224,13 @@ class MoodleNotification(Base):
     sent_to_user: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # Relationships
@@ -220,9 +245,13 @@ class MoodleCourse(Base):
     course_id: Mapped[int] = mapped_column(Integer, index=True)  # Moodle's course ID
     course_name: Mapped[str] = mapped_column(String)
     shortname: Mapped[str] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     # Relationships
@@ -250,9 +279,13 @@ class MoodleGrade(Base):
     grade_date_submitted: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
     grade_date_graded: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
     feedback: Mapped[str] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
     last_checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -261,4 +294,21 @@ class MoodleGrade(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "course_id", "grade_item_id", name="uq_user_course_grade"),
+    )
+
+
+class MoodleQuietHours(Base):
+    __tablename__ = "moodle_quiet_hours"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    start_time: Mapped[time] = mapped_column(Time)  # Time of day (HH:MM:SS)
+    end_time: Mapped[time] = mapped_column(Time)  # Time of day (HH:MM:SS)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

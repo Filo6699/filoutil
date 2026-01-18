@@ -95,12 +95,23 @@ async def course_watcher_task(app: Application) -> None:
     5. Detects grade changes (new grades or updated grades)
     6. Syncs grades to database
     7. Sends notifications for grade changes
+
+    Note: This task is skipped during quiet hours (only session refresh task runs).
     """
     logger.info("Starting Moodle course watcher task...")
 
     while True:
         try:
             with SessionLocal() as db:
+                # Check if we're in quiet hours
+                from filoutil.db.moodle_quiet_hours import is_in_quiet_hours
+
+                if is_in_quiet_hours(db):
+                    logger.debug("Skipping course watcher task - currently in quiet hours")
+                    # Sleep for a shorter interval during quiet hours to check more frequently
+                    await asyncio.sleep(60)  # Check every minute during quiet hours
+                    continue
+
                 active_sessions = get_all_active_sessions(db)
 
                 if not active_sessions:

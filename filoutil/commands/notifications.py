@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 
 from filoutil.auth import require_module_permission
 from filoutil.commands.notification_settings import get_user_notification_settings
+from filoutil.config import format_time_for_display
 from filoutil.db.models import MoodleNotification
 from filoutil.db.moodle_notifications import get_notification_by_moodle_id, get_user_notifications
 from filoutil.db.postgres import SessionLocal
@@ -266,7 +267,9 @@ async def show_notification_detail(
 
     # Format detailed message - show both relative time and absolute time
     time_ago = format_time_ago(notification.timecreated)
-    absolute_time = datetime.fromtimestamp(notification.timecreated).strftime("%Y-%m-%d %H:%M:%S")
+    # Convert Unix timestamp to datetime and format in configured timezone
+    notification_dt = datetime.fromtimestamp(notification.timecreated, tz=timezone.utc)
+    absolute_time = format_time_for_display(notification_dt)
 
     # Escape Markdown special characters in notification content
     subject = escape_markdown(notification.subject or "")
