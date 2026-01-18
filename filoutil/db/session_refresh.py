@@ -76,7 +76,15 @@ def stop_session_refresh(
 
         # Calculate duration in seconds
         if session_refresh.started_at and session_refresh.ended_at:
-            duration = session_refresh.ended_at - session_refresh.started_at
+            # Ensure both datetimes are timezone-aware before subtracting
+            started_at = session_refresh.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            ended_at = session_refresh.ended_at
+            if ended_at.tzinfo is None:
+                ended_at = ended_at.replace(tzinfo=timezone.utc)
+
+            duration = ended_at - started_at
             session_refresh.duration_seconds = int(duration.total_seconds())
 
         db.commit()
