@@ -1,8 +1,18 @@
-DB_CONTAINER=filoutil-db
-DB_USER=postgres
-DB_NAME=filoutil
-BACKUP_FILE=backup.sql
-BACKUPS_DIR=backups
+# Load variables from .env file if it exists
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
+# Default values (can be overridden by .env)
+DB_CONTAINER ?= filoutil-db
+DB_USER ?= postgres
+DB_NAME ?= filoutil
+BACKUP_FILE ?= backup.sql
+BACKUPS_DIR ?= backups
+
+# Export all variables for use in shell commands
+export DB_CONTAINER DB_USER DB_NAME BACKUP_FILE BACKUPS_DIR
 
 .PHONY: db backup restore ensure-db ensure-backups-dir
 
