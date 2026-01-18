@@ -78,6 +78,10 @@ async def notify_admins_online(app: Application):
                 return
 
             last_hb = status_rec.last_heartbeat
+            # Ensure last_hb is timezone-aware before any operations
+            if last_hb.tzinfo is None:
+                last_hb = last_hb.replace(tzinfo=timezone.utc)
+
             now = datetime.now(timezone.utc)
             downtime = now - last_hb
 
@@ -94,9 +98,6 @@ async def notify_admins_online(app: Application):
             minutes, seconds = divmod(remainder, 60)
             downtime_str = f"{hours}h {minutes}m {seconds}s"
 
-            # Ensure last_hb is timezone-aware before formatting
-            if last_hb.tzinfo is None:
-                last_hb = last_hb.replace(tzinfo=timezone.utc)
             last_seen_str = format_time_for_display(last_hb)
 
             message = (

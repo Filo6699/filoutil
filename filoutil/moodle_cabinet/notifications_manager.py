@@ -4,6 +4,7 @@ This module handles fetching notifications from Moodle and sending them to users
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,7 @@ from telegram.ext import Application
 
 from filoutil.db.models import MoodleNotification, SessionRefresh, User
 from filoutil.db.postgres import SessionLocal
+from filoutil.moodle_cabinet.request_logger import log_moodle_request
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +107,11 @@ def format_time_ago(timestamp: int) -> str:
 
 
 async def mark_all_notifications_as_read(
-    sesskey: str, moodleSession: str, useridto: int, timecreatedto: int | None = None
+    sesskey: str,
+    moodleSession: str,
+    useridto: int,
+    timecreatedto: int | None = None,
+    session_refresh_id: int | None = None,
 ) -> tuple[bool, str | None]:
     """
     Mark all notifications as read in Moodle.
@@ -115,6 +121,7 @@ async def mark_all_notifications_as_read(
         moodleSession: Moodle session cookie value
         useridto: User ID
         timecreatedto: Optional timestamp - mark notifications up to this time as read
+        session_refresh_id: Optional session refresh ID for logging
 
     Returns:
         Tuple of (success: bool, error_message: str | None)
@@ -142,11 +149,27 @@ async def mark_all_notifications_as_read(
         }
     ]
 
+    # Measure request timing
+    start_time = time.perf_counter()
+    request_size_bytes = None
+    response_size_bytes = None
+    response_status_code = None
+    success = False
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Calculate request size (approximate)
+            import json
+
+            request_body = json.dumps(payload)
+            request_size_bytes = len(request_body.encode("utf-8"))
+
             response = await client.post(
                 url, params=params, headers=headers, cookies=cookies, json=payload
             )
+
+            response_status_code = response.status_code
+            response_size_bytes = len(response.content) if response.content else None
 
             if response.status_code == 200:
                 try:
@@ -158,6 +181,7 @@ async def mark_all_notifications_as_read(
                         if "error" in item:
                             error_val = item["error"]
                             if error_val is False or error_val is None:
+                                success = True
                                 return True, None
                             elif error_val is True:
                                 error_msg = item.get("message", "Unknown error")
@@ -179,9 +203,27 @@ async def mark_all_notifications_as_read(
                 return False, f"HTTP {response.status_code}: {error_text}"
 
     except httpx.RequestError as e:
+        response_status_code = 0  # No response received
         return False, f"Request failed: {str(e)}"
     except Exception as e:
+        response_status_code = 0  # No response received
         return False, f"Unexpected error: {str(e)}"
+    finally:
+        # Log the request
+        end_time = time.perf_counter()
+        response_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        log_moodle_request(
+            http_method="POST",
+            endpoint_path=LMS_ENDPOINT,
+            response_status_code=response_status_code or 0,
+            response_time_ms=response_time_ms,
+            success=success,
+            api_method_name="core_message_mark_all_notifications_as_read",
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            session_refresh_id=session_refresh_id,
+        )
 
 
 async def fetch_moodle_user_id(
@@ -217,6 +259,7 @@ async def fetch_notifications(
     useridto: int,
     limit: int = DEFAULT_NOTIFICATION_LIMIT,
     offset: int = DEFAULT_NOTIFICATION_OFFSET,
+    session_refresh_id: int | None = None,
 ) -> tuple[bool, list[dict[str, Any]] | None, str | None]:
     """
     Fetch notifications from Moodle API.
@@ -227,6 +270,7 @@ async def fetch_notifications(
         useridto: User ID to fetch notifications for
         limit: Maximum number of notifications to fetch
         offset: Offset for pagination
+        session_refresh_id: Optional session refresh ID for logging
 
     Returns:
         Tuple of (success: bool, notifications: list[dict] | None, error_message: str | None)
@@ -249,11 +293,27 @@ async def fetch_notifications(
         }
     ]
 
+    # Measure request timing
+    start_time = time.perf_counter()
+    request_size_bytes = None
+    response_size_bytes = None
+    response_status_code = None
+    success = False
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Calculate request size (approximate)
+            import json
+
+            request_body = json.dumps(payload)
+            request_size_bytes = len(request_body.encode("utf-8"))
+
             response = await client.post(
                 url, params=params, headers=headers, cookies=cookies, json=payload
             )
+
+            response_status_code = response.status_code
+            response_size_bytes = len(response.content) if response.content else None
 
             if response.status_code == 200:
                 try:
@@ -268,6 +328,7 @@ async def fetch_notifications(
                                 # Success - extract notifications
                                 notifications_data = item.get("data", {})
                                 notifications = notifications_data.get("notifications", [])
+                                success = True
                                 return True, notifications, None
                             elif error_val is True:
                                 error_msg = item.get("message", "Unknown error")
@@ -289,9 +350,27 @@ async def fetch_notifications(
                 return False, None, f"HTTP {response.status_code}: {error_text}"
 
     except httpx.RequestError as e:
+        response_status_code = 0  # No response received
         return False, None, f"Request failed: {str(e)}"
     except Exception as e:
+        response_status_code = 0  # No response received
         return False, None, f"Unexpected error: {str(e)}"
+    finally:
+        # Log the request
+        end_time = time.perf_counter()
+        response_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        log_moodle_request(
+            http_method="POST",
+            endpoint_path=LMS_ENDPOINT,
+            response_status_code=response_status_code or 0,
+            response_time_ms=response_time_ms,
+            success=success,
+            api_method_name="message_popup_get_popup_notifications",
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            session_refresh_id=session_refresh_id,
+        )
 
 
 def store_notification(
@@ -493,6 +572,7 @@ async def process_notifications_for_user(
             session_refresh.sesskey,
             session_refresh.moodleSession,
             moodle_user_id,
+            session_refresh_id=session_refresh.id,
         )
 
         if not success:
@@ -514,6 +594,7 @@ async def process_notifications_for_user(
             session_refresh.moodleSession,
             moodle_user_id,
             timecreatedto=latest_timestamp,
+            session_refresh_id=session_refresh.id,
         )
 
         if mark_success:
