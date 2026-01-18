@@ -269,9 +269,15 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     pass
                 return
 
-            page = int(data[2]) if len(data) > 2 and data[2] == "page" else 0
-            if len(data) > 3 and data[2] == "page":
-                page = int(data[3])
+            try:
+                page = int(data[2]) if len(data) > 2 and data[2] == "page" else 0
+                if len(data) > 3 and data[2] == "page":
+                    page = int(data[3])
+                if page < 0:
+                    raise ValueError("Invalid page number")
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
 
             await show_sessions_list(db, user.id, query, context, page=page)
 
@@ -779,10 +785,15 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Show individual session details
         from filoutil.commands.moodle.sessions import show_session_details
 
-        if len(data) < 3:
+        try:
+            if len(data) < 3:
+                raise IndexError("Missing session ID")
+            session_id = int(data[2])
+            if session_id <= 0:
+                raise ValueError("Invalid session ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
             return
-
-        session_id = int(data[2])
 
         with SessionLocal() as db:
             user = get_user_by_telegram_id(db, query.from_user.id)
@@ -799,10 +810,15 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Handle stopping a session
         from filoutil.commands.moodle.sessions import stop_session_callback
 
-        if len(data) < 3:
+        try:
+            if len(data) < 3:
+                raise IndexError("Missing session ID")
+            session_id = int(data[2])
+            if session_id <= 0:
+                raise ValueError("Invalid session ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
             return
-
-        session_id = int(data[2])
 
         with SessionLocal() as db:
             user = get_user_by_telegram_id(db, query.from_user.id)
@@ -819,10 +835,15 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Handle editing session name
         from filoutil.commands.moodle.sessions import edit_session_name_callback
 
-        if len(data) < 3:
+        try:
+            if len(data) < 3:
+                raise IndexError("Missing session ID")
+            session_id = int(data[2])
+            if session_id <= 0:
+                raise ValueError("Invalid session ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
             return
-
-        session_id = int(data[2])
 
         with SessionLocal() as db:
             user = get_user_by_telegram_id(db, query.from_user.id)

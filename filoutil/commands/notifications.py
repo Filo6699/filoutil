@@ -255,14 +255,15 @@ async def show_notification_detail(
     message,
     context: ContextTypes.DEFAULT_TYPE,
     page: int,
+    user_id: int,
 ) -> None:
     """Show detailed view of a single notification."""
     notification = db.execute(
         select(MoodleNotification).where(MoodleNotification.id == notification_id)
     ).scalar_one_or_none()
 
-    if not notification:
-        await message.edit_message_text("❌ Notification not found.")
+    if not notification or notification.user_id != user_id:
+        await message.edit_message_text("❌ Notification not found or access denied.")
         return
 
     # Format detailed message - show both relative time and absolute time
@@ -335,9 +336,15 @@ async def notifications_callback(update: Update, context: ContextTypes.DEFAULT_T
             await show_notifications_list(db, user.id, query, context, page)
 
         elif action == "detail":
-            notification_id = int(data[2])
-            page = int(data[3]) if len(data) > 3 else 0
-            await show_notification_detail(db, notification_id, query, context, page)
+            try:
+                notification_id = int(data[2])
+                if notification_id <= 0:
+                    raise ValueError("Invalid notification ID")
+                page = int(data[3]) if len(data) > 3 else 0
+            except (ValueError, IndexError):
+                await query.answer("❌ Invalid request.", show_alert=True)
+                return
+            await show_notification_detail(db, notification_id, query, context, page, user.id)
 
         elif action == "noop":
             # Do nothing, just acknowledge
