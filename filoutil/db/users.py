@@ -12,11 +12,17 @@ def get_user_by_telegram_id(db: Session, telegram_id: int):
 
 
 def ensure_user_by_telegram_id(db: Session, telegram_id: int, username: str | None):
-    """Create the user if missing (default whitelisted=false) and refresh username/updated_at."""
+    """Create the user if missing (default whitelisted=false) and refresh username/updated_at.
+
+    Returns:
+        tuple: (user, is_new) where is_new is True if the user was just created
+    """
     user = get_user_by_telegram_id(db, telegram_id)
+    is_new = False
     if not user:
         user = User(telegram_id=telegram_id, username=username, whitelisted=False, role="user")
         db.add(user)
+        is_new = True
     else:
         user.username = username
         user.updated_at = datetime.utcnow()
@@ -24,7 +30,7 @@ def ensure_user_by_telegram_id(db: Session, telegram_id: int, username: str | No
 
     db.commit()
     db.refresh(user)
-    return user
+    return user, is_new
 
 
 def update_user_activity(db: Session, telegram_id: int) -> None:

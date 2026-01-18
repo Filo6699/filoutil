@@ -99,6 +99,12 @@ def get_user_details_keyboard(user_id: int, user) -> InlineKeyboardMarkup:
                 callback_data=f"admin_users:toggle_permission:{user.id}:moodle",
             ),
         ],
+        [
+            InlineKeyboardButton(
+                "📢 Notify Permissions",
+                callback_data=f"admin_users:notify_permissions:{user.id}",
+            )
+        ],
         [InlineKeyboardButton("⬅️ Back to List", callback_data="admin_users:list:0")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -449,6 +455,59 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
+
+    elif action == "notify_permissions":
+        # Notify user about their current permissions
+        try:
+            user_id = int(data[2])
+            if user_id <= 0:
+                raise ValueError("Invalid user ID")
+        except (ValueError, IndexError):
+            await query.answer("❌ Invalid request.", show_alert=True)
+            return
+
+        with SessionLocal() as db:
+            from filoutil.db.models import User
+
+            user = db.get(User, user_id)
+            if not user:
+                await query.answer("❌ User not found.", show_alert=True)
+                return
+
+            # Get user's granted permissions
+            permissions = get_user_permissions(db, user.id)
+
+            if not permissions:
+                await query.answer("❌ User has no permissions to notify about.", show_alert=True)
+                return
+
+            # Format permission names for display
+            permission_names = {
+                "monitoring": "Monitoring",
+                "moodle": "Moodle",
+            }
+
+            # Build the notification message
+            permission_list = "\n".join(
+                [f"  • {permission_names.get(perm, perm.title())}" for perm in permissions]
+            )
+
+            message = (
+                f"🔔 *Permission Update*\n\n"
+                f"Your permissions have been updated. Your current permissions are:\n\n"
+                f"{permission_list}"
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=message,
+                    parse_mode="Markdown",
+                )
+                await query.answer("✅ Notification sent to user", show_alert=False)
+            except Exception as e:
+                logger.error(f"Failed to send permission notification to user {user_id}: {e}")
+                await query.answer("❌ Failed to send notification.", show_alert=True)
 
     elif action == "quiet_hours":
         # Handle quiet hours management
