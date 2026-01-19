@@ -19,13 +19,16 @@ logger = logging.getLogger(__name__)
 # Default notification settings
 DEFAULT_NOTIFICATION_SETTINGS = {
     "enabled": True,
-    "check_interval_s": 300,  # 5 minutes
+    "check_interval_s": 600,  # 15 minutes
     "send_immediately": True,
     "filter_event_types": [],  # Empty = all event types
     "filter_components": [],  # Empty = all components
     "max_notifications_per_batch": 5,  # Max notifications to send at once
-    "word_blacklist": [],  # List of words to filter out (case-insensitive)
-    "notifications_per_page": 10,  # Number of notifications per page in list view
+    "word_blacklist": [
+        "Assignment submission confirmation",
+        "has given feedback for assignment",
+    ],  # List of words/phrases to filter out (case-insensitive)
+    "notifications_per_page": 5,  # Number of notifications per page in list view
 }
 
 CHECK_INTERVAL_OPTIONS = {
