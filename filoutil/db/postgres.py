@@ -149,6 +149,110 @@ def run_migrations():
             # Ignore errors - index might already exist or table structure might differ
             logger.debug(f"Index check/creation skipped: {e}")
 
+    # Create moodle_request_logs table if it doesn't exist
+    table_names = inspector.get_table_names()
+    if "moodle_request_logs" not in table_names:
+        logger.info("Creating 'moodle_request_logs' table...")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE moodle_request_logs (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        http_method VARCHAR NOT NULL,
+                        endpoint_path VARCHAR NOT NULL,
+                        api_method_name VARCHAR,
+                        response_status_code INTEGER NOT NULL,
+                        response_time_ms DOUBLE PRECISION NOT NULL,
+                        request_size_bytes INTEGER,
+                        response_size_bytes INTEGER,
+                        success BOOLEAN NOT NULL,
+                        session_refresh_id INTEGER,
+                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT fk_moodle_request_logs_session_refresh_id
+                            FOREIGN KEY (session_refresh_id)
+                            REFERENCES session_refresh(id)
+                            ON DELETE SET NULL
+                    )
+                    """
+                )
+            )
+            # Create indexes
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_moodle_request_logs_timestamp ON moodle_request_logs(timestamp)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_moodle_request_logs_session_refresh_id ON moodle_request_logs(session_refresh_id)"
+                )
+            )
+        logger.info("Migration completed: created 'moodle_request_logs' table.")
+    else:
+        # Table exists, check if it has the correct schema
+        columns = [col["name"] for col in inspector.get_columns("moodle_request_logs")]
+        required_columns = [
+            "id",
+            "timestamp",
+            "http_method",
+            "endpoint_path",
+            "api_method_name",
+            "response_status_code",
+            "response_time_ms",
+            "request_size_bytes",
+            "response_size_bytes",
+            "success",
+            "session_refresh_id",
+            "created_at",
+        ]
+        missing_columns = [col for col in required_columns if col not in columns]
+        if missing_columns:
+            logger.warning(
+                f"moodle_request_logs table exists but missing columns: {missing_columns}. "
+                "Dropping and recreating table (logging data will be lost)."
+            )
+            # Drop and recreate the table since it's a logging table and can be safely recreated
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS moodle_request_logs CASCADE"))
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE moodle_request_logs (
+                            id SERIAL PRIMARY KEY,
+                            timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            http_method VARCHAR NOT NULL,
+                            endpoint_path VARCHAR NOT NULL,
+                            api_method_name VARCHAR,
+                            response_status_code INTEGER NOT NULL,
+                            response_time_ms DOUBLE PRECISION NOT NULL,
+                            request_size_bytes INTEGER,
+                            response_size_bytes INTEGER,
+                            success BOOLEAN NOT NULL,
+                            session_refresh_id INTEGER,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_moodle_request_logs_session_refresh_id
+                                FOREIGN KEY (session_refresh_id)
+                                REFERENCES session_refresh(id)
+                                ON DELETE SET NULL
+                        )
+                        """
+                    )
+                )
+                # Create indexes
+                conn.execute(
+                    text(
+                        "CREATE INDEX ix_moodle_request_logs_timestamp ON moodle_request_logs(timestamp)"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX ix_moodle_request_logs_session_refresh_id ON moodle_request_logs(session_refresh_id)"
+                    )
+                )
+            logger.info("Migration completed: recreated 'moodle_request_logs' table.")
+
 
 def init_db():
     retries = 5

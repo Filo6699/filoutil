@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -10,6 +11,7 @@ from telegram.ext import Application
 from filoutil.db.models import SessionRefresh
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.session_refresh import stop_session_refresh
+from filoutil.moodle_cabinet.request_logger import log_moodle_request
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +89,16 @@ async def get_session_time_remaining(
         return False, None, f"Unexpected error: {str(e)}"
 
 
-async def refresh_session(sesskey: str, moodleSession: str) -> tuple[bool, str | None]:
+async def refresh_session(
+    sesskey: str, moodleSession: str, session_refresh_id: int | None = None
+) -> tuple[bool, str | None]:
     """
     Send a session refresh request to the LMS endpoint.
+
+    Args:
+        sesskey: Moodle session key
+        moodleSession: Moodle session cookie value
+        session_refresh_id: Optional session refresh ID for logging
 
     Returns:
         Tuple of (success: bool, error_message: str | None)
@@ -100,11 +109,27 @@ async def refresh_session(sesskey: str, moodleSession: str) -> tuple[bool, str |
     cookies = {"MoodleSession": moodleSession}
     payload = [{"index": 0, "methodname": "core_session_touch", "args": {}}]
 
+    # Measure request timing
+    start_time = time.perf_counter()
+    request_size_bytes = None
+    response_size_bytes = None
+    response_status_code = None
+    success = False
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Calculate request size (approximate)
+            import json
+
+            request_body = json.dumps(payload)
+            request_size_bytes = len(request_body.encode("utf-8"))
+
             response = await client.post(
                 url, params=params, headers=headers, cookies=cookies, json=payload
             )
+
+            response_status_code = response.status_code
+            response_size_bytes = len(response.content) if response.content else None
 
             if response.status_code == 200:
                 # Check if response indicates success
@@ -119,6 +144,7 @@ async def refresh_session(sesskey: str, moodleSession: str) -> tuple[bool, str |
                             error_val = item["error"]
                             # If error is False or None, it's success
                             if error_val is False or error_val is None:
+                                success = True
                                 return True, None
                             # If error is True or a dict/string, it's an error
                             elif error_val is True:
@@ -130,12 +156,14 @@ async def refresh_session(sesskey: str, moodleSession: str) -> tuple[bool, str |
                             else:
                                 return False, f"LMS error: {error_val}"
                     # If no error field or empty response, assume success
+                    success = True
                     return True, None
                 except Exception as e:
                     logger.warning(
                         f"Failed to parse response JSON: {e}, response text: {response.text[:500]}"
                     )
                     # If status is 200, assume success even if JSON parsing fails
+                    success = True
                     return True, None
             else:
                 error_text = response.text[:200] if response.text else "No response body"
@@ -143,9 +171,27 @@ async def refresh_session(sesskey: str, moodleSession: str) -> tuple[bool, str |
                 return False, f"HTTP {response.status_code}: {error_text}"
 
     except httpx.RequestError as e:
+        response_status_code = 0  # No response received
         return False, f"Request failed: {str(e)}"
     except Exception as e:
+        response_status_code = 0  # No response received
         return False, f"Unexpected error: {str(e)}"
+    finally:
+        # Log the request
+        end_time = time.perf_counter()
+        response_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        log_moodle_request(
+            http_method="POST",
+            endpoint_path=LMS_ENDPOINT,
+            response_status_code=response_status_code or 0,
+            response_time_ms=response_time_ms,
+            success=success,
+            api_method_name="core_session_touch",
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            session_refresh_id=session_refresh_id,
+        )
 
 
 async def run_session_refresh_task(
@@ -279,7 +325,9 @@ async def run_session_refresh_task(
         last_error = None
 
         for attempt in range(MAX_RETRIES):
-            success, error_msg = await refresh_session(sesskey, moodleSession)
+            success, error_msg = await refresh_session(
+                sesskey, moodleSession, session_refresh_id=session_refresh_id
+            )
 
             if success:
                 logger.info(

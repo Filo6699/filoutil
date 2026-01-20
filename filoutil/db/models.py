@@ -312,3 +312,31 @@ class MoodleQuietHours(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class MoodleRequestLog(Base):
+    __tablename__ = "moodle_request_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    http_method: Mapped[str] = mapped_column(String)  # GET, POST
+    endpoint_path: Mapped[str] = mapped_column(String)  # e.g., "/lib/ajax/service.php"
+    api_method_name: Mapped[str] = mapped_column(
+        String, nullable=True
+    )  # e.g., "core_session_touch"
+    response_status_code: Mapped[int] = mapped_column(Integer)
+    response_time_ms: Mapped[float] = mapped_column(Float)  # Response time in milliseconds
+    request_size_bytes: Mapped[int] = mapped_column(Integer, nullable=True)
+    response_size_bytes: Mapped[int] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean)
+    session_refresh_id: Mapped[int] = mapped_column(
+        ForeignKey("session_refresh.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    session_refresh: Mapped["SessionRefresh"] = relationship()
