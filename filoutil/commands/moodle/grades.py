@@ -141,6 +141,7 @@ def format_gradebook(course_name: str, grades: list) -> str:
     register_endterm = None
     register_term = None
     register_final = None
+    register_total = None
     attendance = None
     assignments = []
     other_grades = []
@@ -188,10 +189,14 @@ def format_gradebook(course_name: str, grades: list) -> str:
             register_midterm = (item_name_unescaped, grade_display)
         elif "register endterm" in item_name_lower:
             register_endterm = (item_name_unescaped, grade_display)
-        elif "register term" in item_name_lower:
+        elif "register term" in item_name_lower and "register total" not in item_name_lower:
             register_term = (item_name_unescaped, grade_display)
         elif "register final" in item_name_lower:
             register_final = (item_name_unescaped, grade_display)
+        elif (
+            "register total" in item_name_lower or "register(not to edit) total" in item_name_lower
+        ):
+            register_total = (item_name_unescaped, grade_display)
         elif "attendance" in item_name_lower:
             attendance = (item_name_unescaped, grade_display)
         elif grade.item_module == "assign" or "assignment" in item_name_lower:
@@ -220,9 +225,12 @@ def format_gradebook(course_name: str, grades: list) -> str:
         text += f"{register_term[0]} → {register_term[1]}\n"
     if register_final:
         text += f"{register_final[0]} → {register_final[1]}\n"
+    if register_total:
+        display_name = register_total[0].replace("(not to edit) ", "")
+        text += f"{display_name} → {register_total[1]}\n"
 
     # Add spacing before attendance
-    if register_midterm or register_endterm or register_term or register_final:
+    if register_midterm or register_endterm or register_term or register_final or register_total:
         text += "\n"
 
     # Attendance

@@ -13,6 +13,7 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
 from filoutil.db.models import MoodleCourse, MoodleGrade, SessionRefresh, User
@@ -227,14 +228,14 @@ async def fetch_course_grades(
                         )
                         return True, [], None
 
-                    # Find all <th> elements with "item" class, then get their parent <tr>
-                    # The <tr> elements don't have "item" class, but the <th> inside them do
-                    item_ths = tbody.find_all("th", class_=re.compile(r"\bitem\b"))
+                    # Find rows by looking for th with id="row_X_Y" pattern
+                    # This is more reliable than class-based matching
+                    all_ths_with_id = tbody.find_all("th", id=re.compile(r"^row_\d+_\d+$"))
 
                     # Get unique parent rows
                     rows = []
                     seen_rows = set()
-                    for th in item_ths:
+                    for th in all_ths_with_id:
                         row = th.find_parent("tr")
                         if row and id(row) not in seen_rows:
                             rows.append(row)
@@ -243,13 +244,13 @@ async def fetch_course_grades(
                     processed_count = 0
                     skipped_count = 0
                     for row in rows:
-                        # Skip category rows and spacer rows
-                        if "category" in row.get("class", []) or "spacer" in row.get("class", []):
+                        # Skip spacer rows (but NOT category rows, as they may contain categoryitem totals)
+                        if "spacer" in row.get("class", []):
                             skipped_count += 1
                             continue
 
                         # Extract row ID to get grade_item_id
-                        row_th = row.find("th", class_=re.compile(r"\bitem\b"))
+                        row_th = row.find("th", id=re.compile(r"^row_\d+_\d+$"))
                         if not row_th or not row_th.get("id"):
                             skipped_count += 1
                             continue
@@ -613,11 +614,23 @@ async def send_grade_notification(
         gradebook_url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course.course_id}"
         message += f"\n🔗 [View in Moodle]({gradebook_url})"
 
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📊 View Full Grades",
+                        callback_data=f"moodle:grades:course:{course.course_id}",
+                    )
+                ]
+            ]
+        )
+
         await app.bot.send_message(
             chat_id=user_telegram_id,
             text=message,
             parse_mode="Markdown",
             disable_web_page_preview=True,
+            reply_markup=keyboard,
         )
         return True
     except Exception as e:

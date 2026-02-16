@@ -16,3 +16,4 @@ backup/
 backups/
 context/
 prod.docker-compose.yml
+telemetry-id
