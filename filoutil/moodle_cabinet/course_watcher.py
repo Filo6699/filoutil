@@ -525,16 +525,12 @@ def detect_grade_changes(
         )
         is_course_total = "course total" in item_name_lower or item_name_lower == "total"
 
-        if (
-            (is_register_total or is_course_total)
-            and new_grade_raw is not None
-            and new_grade_raw == 0.0
-        ):
-            if is_register_total:
-                if not register_final_available:
-                    continue
-            else:
-                continue
+        # Skip register total notifications entirely — course total already covers this
+        if is_register_total:
+            continue
+
+        if is_course_total and new_grade_raw is not None and new_grade_raw == 0.0:
+            continue
 
         stored_grade = stored_grades_map.get(grade_item_id)
 
