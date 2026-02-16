@@ -498,11 +498,28 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"{permission_list}"
             )
 
+            keyboard = None
+            if "moodle" in permissions:
+                message += (
+                    "\n\n*How to connect Moodle:*\n"
+                    "1. Open 🎓 Moodle from the menu\n"
+                    "2. Add your Moodle session\n"
+                    "3. The bot will automatically sync grades\n"
+                    "4. You will receive notifications about new grades"
+                )
+                keyboard = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("🎓 Moodle", callback_data="menu:moodle")],
+                        [InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")],
+                    ]
+                )
+
             try:
                 await context.bot.send_message(
                     chat_id=user.telegram_id,
                     text=message,
                     parse_mode="Markdown",
+                    reply_markup=keyboard,
                 )
                 await query.answer("✅ Notification sent to user", show_alert=False)
             except Exception as e:
