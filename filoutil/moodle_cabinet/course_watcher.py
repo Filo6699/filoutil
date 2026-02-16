@@ -3,6 +3,7 @@
 This module handles fetching courses and grades from Moodle and detecting changes.
 """
 
+import html
 import logging
 import re
 import time
@@ -349,8 +350,45 @@ async def fetch_course_grades(
                         grade_items.append(grade_item)
                         processed_count += 1
 
+                    register_final_available = False
+                    for item in grade_items:
+                        item_name_lower = item["itemname"].lower()
+                        if "register final" in item_name_lower:
+                            if item["graderaw"] is not None or (
+                                item["gradeformatted"] and item["gradeformatted"] != "-"
+                            ):
+                                register_final_available = True
+                                break
+
+                    filtered_items = []
+                    for item in grade_items:
+                        item_name_lower = item["itemname"].lower()
+                        grade_raw = item["graderaw"]
+
+                        is_register_total = (
+                            "register total" in item_name_lower
+                            or "register(not to edit) total" in item_name_lower
+                            or "registertotal" in item_name_lower
+                        )
+                        is_course_total = (
+                            "course total" in item_name_lower or item_name_lower == "total"
+                        )
+
+                        if (
+                            (is_register_total or is_course_total)
+                            and grade_raw is not None
+                            and grade_raw == 0.0
+                        ):
+                            if is_register_total:
+                                if not register_final_available:
+                                    continue
+                            else:
+                                continue
+
+                        filtered_items.append(item)
+
                     success = True
-                    return True, grade_items, None
+                    return True, filtered_items, None
 
                 except Exception as e:
                     logger.warning(
@@ -459,21 +497,48 @@ def detect_grade_changes(
     changes = []
     stored_grades = get_course_grades(db, user_id, course_id)
 
-    # Create a map of stored grades by grade_item_id
     stored_grades_map = {grade.grade_item_id: grade for grade in stored_grades}
+
+    register_final_available = False
+    for grade_data in new_grades:
+        item_name_lower = grade_data.get("itemname", "").lower()
+        if "register final" in item_name_lower:
+            grade_raw = grade_data.get("graderaw")
+            grade_formatted = grade_data.get("gradeformatted")
+            if grade_raw is not None or (grade_formatted and grade_formatted != "-"):
+                register_final_available = True
 
     for grade_data in new_grades:
         grade_item_id = grade_data.get("id")
         if not grade_item_id:
             continue
 
-        stored_grade = stored_grades_map.get(grade_item_id)
+        item_name_lower = grade_data.get("itemname", "").lower()
         new_grade_raw = grade_data.get("graderaw")
         new_grade_formatted = grade_data.get("gradeformatted")
         new_date_graded = grade_data.get("gradedategraded")
 
+        is_register_total = (
+            "register total" in item_name_lower
+            or "register(not to edit) total" in item_name_lower
+            or "registertotal" in item_name_lower
+        )
+        is_course_total = "course total" in item_name_lower or item_name_lower == "total"
+
+        if (
+            (is_register_total or is_course_total)
+            and new_grade_raw is not None
+            and new_grade_raw == 0.0
+        ):
+            if is_register_total:
+                if not register_final_available:
+                    continue
+            else:
+                continue
+
+        stored_grade = stored_grades_map.get(grade_item_id)
+
         if not stored_grade:
-            # New grade - grade didn't exist before
             if new_grade_raw is not None or new_grade_formatted:
                 changes.append(
                     {
@@ -488,22 +553,19 @@ def detect_grade_changes(
                     }
                 )
         else:
-            # Check if grade changed
             old_grade_raw = stored_grade.grade_raw
             old_grade_formatted = stored_grade.grade_formatted
             old_date_graded = stored_grade.grade_date_graded
 
-            # Check if grade value changed
             grade_changed = False
             if new_grade_raw is not None and old_grade_raw is not None:
-                if abs(new_grade_raw - old_grade_raw) > 0.01:  # Allow for floating point precision
+                if abs(new_grade_raw - old_grade_raw) > 0.01:
                     grade_changed = True
             elif new_grade_raw is not None and old_grade_raw is None:
-                grade_changed = True  # Grade was null, now has value
+                grade_changed = True
             elif new_grade_raw is None and old_grade_raw is not None:
-                grade_changed = True  # Grade was set, now null (unlikely but possible)
+                grade_changed = True
 
-            # Check if date graded changed (new grade was just graded)
             date_changed = new_date_graded and new_date_graded != old_date_graded
 
             if grade_changed or date_changed:
@@ -544,14 +606,33 @@ async def send_batch_grade_notification(
         True if sent successfully, False otherwise
     """
     try:
-        message = f"📊 *Multiple Grade Changes*\n\n"
-        message += f"You have *{len(grade_changes)}* grade changes across your courses.\n\n"
-        message += "Check your grades in the Moodle menu to see all updates."
+
+        def escape_md(text: str) -> str:
+            special_chars = r"_*[]()~`>#+-=|{}.!"
+            return "".join(f"\\{c}" if c in special_chars else c for c in str(text))
+
+        count = len(grade_changes)
+        if count == 0:
+            return True
+
+        if count > 25:
+            message = f"📊 *New Grades \\({count}\\)*\n\n"
+            message += "Too many changes\\. Check your grades in Moodle\\."
+        else:
+            message = f"📊 *New Grades \\({count}\\)*\n\n"
+            for course, grade_change in grade_changes:
+                grade_data = grade_change["grade_data"]
+                item_name = html.unescape(grade_data.get("itemname", "Unknown"))
+                new_grade = grade_change.get("new_grade", "N/A")
+                course_name = html.unescape(course.course_name)
+                course_name = course_name[:30] + "..." if len(course_name) > 30 else course_name
+                item_name_short = item_name[:25] + "..." if len(item_name) > 25 else item_name
+                message += f"• {escape_md(course_name)}: {escape_md(item_name_short)} — *{escape_md(new_grade)}*\n"
 
         await app.bot.send_message(
             chat_id=user_telegram_id,
             text=message,
-            parse_mode="Markdown",
+            parse_mode="MarkdownV2",
             disable_web_page_preview=True,
         )
         return True
@@ -707,7 +788,7 @@ async def process_courses_for_user(
             user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
             if not user:
                 logger.warning(f"User {user_id} not found")
-                return
+                return {"grades_changed": 0, "grades_unchanged": 0}
 
             # Collect all grade changes across all courses
             all_grade_changes = []

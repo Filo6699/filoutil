@@ -106,13 +106,15 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
 
     from datetime import datetime
 
+    grade_raw = grade_data.get("graderaw")
+    grade_formatted = grade_data.get("gradeformatted")
+
     if existing:
-        # Update existing grade
         existing.item_name = grade_data.get("itemname", existing.item_name)
         existing.item_type = grade_data.get("itemtype", existing.item_type)
         existing.item_module = grade_data.get("itemmodule", existing.item_module)
-        existing.grade_raw = grade_data.get("graderaw", existing.grade_raw)
-        existing.grade_formatted = grade_data.get("gradeformatted", existing.grade_formatted)
+        existing.grade_raw = grade_raw if grade_raw is not None else existing.grade_raw
+        existing.grade_formatted = grade_formatted or existing.grade_formatted
         existing.grade_max = grade_data.get("grademax", existing.grade_max)
         existing.grade_min = grade_data.get("grademin", existing.grade_min)
         existing.grade_date_submitted = grade_data.get(
@@ -125,7 +127,6 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
         db.refresh(existing)
         return existing
     else:
-        # Create new grade
         grade = MoodleGrade(
             user_id=user_id,
             course_id=course_id,
@@ -133,8 +134,8 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
             item_name=grade_data.get("itemname", ""),
             item_type=grade_data.get("itemtype"),
             item_module=grade_data.get("itemmodule"),
-            grade_raw=grade_data.get("graderaw"),
-            grade_formatted=grade_data.get("gradeformatted"),
+            grade_raw=grade_raw,
+            grade_formatted=grade_formatted,
             grade_max=grade_data.get("grademax"),
             grade_min=grade_data.get("grademin"),
             grade_date_submitted=grade_data.get("gradedatesubmitted"),
