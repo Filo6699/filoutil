@@ -169,6 +169,7 @@ class SessionRefresh(Base):
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="running")  # running, stopped, failed
     refresh_interval_s: Mapped[int] = mapped_column(Integer, default=300)
+    oidc_data: Mapped[dict] = mapped_column(JSON, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship()

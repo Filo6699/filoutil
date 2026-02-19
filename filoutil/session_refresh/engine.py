@@ -12,6 +12,7 @@ from filoutil.db.models import SessionRefresh
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.session_refresh import stop_session_refresh
 from filoutil.moodle_cabinet.request_logger import log_moodle_request
+from filoutil.session_refresh.oidc_restore import bootstrap_moodle_session_via_oidc
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,81 @@ LMS_BASE_URL = "https://lms.astanait.edu.kz"
 LMS_ENDPOINT = "/lib/ajax/service.php"
 MAX_RETRIES = 3
 RETRY_DELAYS = [3, 5, 10]
+
+
+def _looks_like_auth_failure(error: str | None) -> bool:
+    if not error:
+        return False
+    lowered = error.lower()
+    indicators = [
+        "servicerequireslogin",
+        "requireloginerror",
+        "invalidsesskey",
+        "session expired",
+        "not logged in",
+        "http 401",
+        "http 403",
+        "http 302",
+        "http 303",
+        "lms error: unknown error",
+    ]
+    return any(marker in lowered for marker in indicators)
+
+
+async def try_recover_session_via_oidc(
+    app: Application, session_refresh_id: int, user_telegram_id: int, reason: str
+) -> tuple[bool, str | None]:
+    with SessionLocal() as db:
+        session_refresh = db.execute(
+            select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
+        ).scalar_one_or_none()
+        if not session_refresh:
+            return False, "Session record not found."
+        oidc_data = session_refresh.oidc_data
+
+    if not oidc_data:
+        return False, "OIDC data not configured for this session."
+
+    logger.info(
+        "Attempting OIDC recovery for session %s (reason=%s, has_oidc_data=%s)",
+        session_refresh_id,
+        reason,
+        bool(oidc_data),
+    )
+
+    success, sesskey, moodle_session, updated_oidc_data, error_msg = (
+        await bootstrap_moodle_session_via_oidc(oidc_data)
+    )
+    if not success or not sesskey or not moodle_session:
+        return False, error_msg or "Unknown OIDC recovery error."
+
+    with SessionLocal() as db:
+        session_refresh = db.execute(
+            select(SessionRefresh).where(SessionRefresh.id == session_refresh_id)
+        ).scalar_one_or_none()
+        if not session_refresh:
+            return False, "Session disappeared during recovery."
+
+        session_refresh.sesskey = sesskey
+        session_refresh.moodleSession = moodle_session
+        session_refresh.oidc_data = updated_oidc_data or oidc_data
+        db.commit()
+
+    logger.info("Session %s recovered via OIDC", session_refresh_id)
+    try:
+        await app.bot.send_message(
+            chat_id=user_telegram_id,
+            text=(
+                "🔄 *Moodle Session Recovered*\n\n"
+                "Your Moodle session expired, but it was automatically restored via OIDC."
+                f"\n\n*Trigger:* `{reason}`"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify user {user_telegram_id}: {e}")
+
+    return True, None
 
 
 async def get_session_time_remaining(
@@ -244,6 +320,28 @@ async def run_session_refresh_task(
                 logger.warning(
                     f"Session {session_refresh_id} failed to get time remaining (attempt {attempt + 1}/{MAX_RETRIES}): {time_remaining_error}"
                 )
+
+                if _looks_like_auth_failure(time_remaining_error):
+                    recovery_ok, recovery_error = await try_recover_session_via_oidc(
+                        app,
+                        session_refresh_id,
+                        user_telegram_id,
+                        reason=time_remaining_error or "time_remaining_auth_failure",
+                    )
+                    if recovery_ok:
+                        logger.info(
+                            "Session %s recovered during time-remaining retry loop",
+                            session_refresh_id,
+                        )
+                        time_remaining_success = True
+                        time_remaining_seconds = 0
+                        break
+                    logger.warning(
+                        "Session %s OIDC recovery attempt failed during time-remaining retry: %s",
+                        session_refresh_id,
+                        recovery_error,
+                    )
+
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
                     logger.info(f"Retrying in {delay}s...")
@@ -251,6 +349,20 @@ async def run_session_refresh_task(
 
         # If we couldn't get time remaining, stop the session
         if not time_remaining_success or time_remaining_seconds is None:
+            recovery_ok, recovery_error = await try_recover_session_via_oidc(
+                app,
+                session_refresh_id,
+                user_telegram_id,
+                reason=time_remaining_error or "time_remaining_failed",
+            )
+            if recovery_ok:
+                logger.info(
+                    "Session %s recovered after time-remaining failure; continuing refresh loop",
+                    session_refresh_id,
+                )
+                await asyncio.sleep(1)
+                continue
+
             logger.error(
                 f"Session {session_refresh_id} could not get time remaining after {MAX_RETRIES} attempts, stopping"
             )
@@ -271,7 +383,8 @@ async def run_session_refresh_task(
                         f"❌ *Session Refresh Stopped*\n\n"
                         f"Your LMS session refresh has stopped because we couldn't determine when the session expires.\n\n"
                         f"*Total session duration:* {duration_str}\n"
-                        f"*Error:* `{time_remaining_error or 'Failed to get time remaining'}`"
+                        f"*Error:* `{time_remaining_error or 'Failed to get time remaining'}`\n"
+                        f"*OIDC recovery:* `{recovery_error or 'not available'}`"
                     )
 
                     try:
@@ -339,6 +452,24 @@ async def run_session_refresh_task(
                 logger.warning(
                     f"Session {session_refresh_id} refresh failed (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}"
                 )
+
+                if _looks_like_auth_failure(error_msg):
+                    recovery_ok, recovery_error = await try_recover_session_via_oidc(
+                        app,
+                        session_refresh_id,
+                        user_telegram_id,
+                        reason=error_msg or "refresh_auth_failure",
+                    )
+                    if recovery_ok:
+                        logger.info("Session %s recovered during refresh retry loop", session_refresh_id)
+                        success = True
+                        break
+                    logger.warning(
+                        "Session %s OIDC recovery attempt failed during refresh retry: %s",
+                        session_refresh_id,
+                        recovery_error,
+                    )
+
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
                     logger.info(f"Retrying in {delay}s...")
@@ -346,6 +477,20 @@ async def run_session_refresh_task(
 
         # If all retries failed, stop the session
         if not success:
+            recovery_ok, recovery_error = await try_recover_session_via_oidc(
+                app,
+                session_refresh_id,
+                user_telegram_id,
+                reason=last_error or "refresh_failed",
+            )
+            if recovery_ok:
+                logger.info(
+                    "Session %s recovered after refresh failure; continuing refresh loop",
+                    session_refresh_id,
+                )
+                await asyncio.sleep(1)
+                continue
+
             logger.error(
                 f"Session {session_refresh_id} refresh failed after {MAX_RETRIES} attempts, stopping"
             )
@@ -366,7 +511,8 @@ async def run_session_refresh_task(
                         f"❌ *Session Refresh Stopped*\n\n"
                         f"Your LMS session refresh has stopped after failing {MAX_RETRIES} times.\n\n"
                         f"*Total session duration:* {duration_str}\n"
-                        f"*Error:* `{last_error}`"
+                        f"*Error:* `{last_error}`\n"
+                        f"*OIDC recovery:* `{recovery_error or 'not available'}`"
                     )
 
                     try:

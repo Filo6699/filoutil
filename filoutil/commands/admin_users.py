@@ -503,7 +503,7 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 message += (
                     "\n\n*How to connect Moodle:*\n"
                     "1. Open 🎓 Moodle from the menu\n"
-                    "2. Add your Moodle session\n"
+                    "2. Add your Moodle account\n"
                     "3. The bot will automatically sync grades\n"
                     "4. You will receive notifications about new grades"
                 )

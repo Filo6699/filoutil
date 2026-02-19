@@ -21,7 +21,10 @@ from filoutil.commands.admin import db_query, shell_command
 from filoutil.commands.admin_users import admin_users_callback, admin_users_command
 from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
-from filoutil.commands.moodle.add_session import moodle_add_session_command
+from filoutil.commands.moodle.add_session import (
+    handle_moodle_add_session_input,
+    moodle_add_session_command,
+)
 from filoutil.commands.moodle.menu import moodle_callback, moodle_menu_command
 from filoutil.commands.moodle.quiet_hours import (
     moodle_quiet_hours_add_command,
@@ -182,6 +185,8 @@ def build_app(token: str) -> Application:
         from filoutil.commands.moodle.sessions import handle_session_name_input
 
         if await handle_session_name_input(update, context):
+            return
+        if await handle_moodle_add_session_input(update, context):
             return
         # If not handled by anything else, we could just ignore or log
         pass
