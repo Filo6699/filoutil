@@ -187,9 +187,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Show instructions for refresh_session
         text = (
             "🔄 *Session Refresh*\n\n"
-            "To start a session refresh, send:\n\n"
-            '`/refresh_session {"sesskey": "...", "moodleSession": "..."}`\n\n'
-            "Or use the command directly with your session data."
+            "Send one of these:\n\n"
+            '`/refresh_session {"sesskey":"...","moodleSession":"..."}`\n\n'
+            "*Recommended (auto-recovery):*\n"
+            '`/refresh_session {"oidc":{"microsoft_cookies":"ESTSAUTHPERSISTENT=...; ESTSAUTH=..."}}`'
         )
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu:main")]]

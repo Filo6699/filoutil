@@ -14,6 +14,10 @@ from filoutil.db.session_refresh import (
 )
 from filoutil.db.users import get_user_by_telegram_id
 from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
+from filoutil.session_refresh.oidc_restore import (
+    bootstrap_moodle_session_via_oidc,
+    resolve_sesskey_from_moodle_session,
+)
 from filoutil.session_refresh.engine import run_session_refresh_task
 
 logger = logging.getLogger(__name__)
@@ -66,7 +70,11 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
 
     if not json_part:
         await update.message.reply_text(
-            'Usage: `/refresh_session {"sesskey": "...", "moodleSession": "..."}`',
+            "Usage: `/refresh_session {\"sesskey\": \"...\", \"moodleSession\": \"...\"}`\n"
+            "or\n"
+            "`/refresh_session {\"moodleSession\": \"...\"}`\n"
+            "or\n"
+            "`/refresh_session {\"oidc\": {\"microsoft_cookies\": \"ESTSAUTHPERSISTENT=...; ESTSAUTH=...\"}}`\n",
             parse_mode="Markdown",
         )
         return
@@ -78,18 +86,35 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(f"❌ Invalid JSON format: {str(e)}")
         return
 
-    # Validate required fields
-    if "sesskey" not in data or "moodleSession" not in data:
-        await update.message.reply_text(
-            "❌ Missing required fields. Please provide `sesskey` and `moodleSession`."
-        )
-        return
+    sesskey = data.get("sesskey")
+    moodleSession = data.get("moodleSession")
+    oidc_data = data.get("oidc") if isinstance(data.get("oidc"), dict) else None
 
-    sesskey = data["sesskey"]
-    moodleSession = data["moodleSession"]
+    if (not sesskey or not moodleSession) and oidc_data:
+        success, sesskey, moodleSession, updated_oidc_data, error_msg = (
+            await bootstrap_moodle_session_via_oidc(oidc_data)
+        )
+        if not success or not sesskey or not moodleSession:
+            await update.message.reply_text(
+                f"❌ Failed to bootstrap Moodle session via OIDC: {error_msg or 'Unknown error'}"
+            )
+            return
+        oidc_data = updated_oidc_data or oidc_data
+    elif moodleSession and not sesskey:
+        success, resolved_sesskey, error_msg = await resolve_sesskey_from_moodle_session(
+            moodleSession
+        )
+        if not success or not resolved_sesskey:
+            await update.message.reply_text(
+                f"❌ Could not auto-fetch `sesskey`: {error_msg or 'Unknown error'}"
+            )
+            return
+        sesskey = resolved_sesskey
 
     if not sesskey or not moodleSession:
-        await update.message.reply_text("❌ `sesskey` and `moodleSession` cannot be empty.")
+        await update.message.reply_text(
+            "❌ Missing required fields. Provide `moodleSession`, or pass `oidc` with Microsoft cookies (autonomous), or with `code/state/session_state` (one-time)."
+        )
         return
 
     with SessionLocal() as db:
@@ -132,7 +157,13 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
 
         # Create session refresh job
         session_refresh = create_session_refresh(
-            db, user.id, sesskey, moodleSession, refresh_interval, name=session_name
+            db,
+            user.id,
+            sesskey,
+            moodleSession,
+            refresh_interval,
+            name=session_name,
+            oidc_data=oidc_data,
         )
 
         # Immediately fetch and store Moodle user ID
@@ -165,7 +196,8 @@ async def refresh_session_command(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(
             f"✅ Session refresh started!\n\n"
             f"*Session ID:* {session_refresh.id}\n\n"
-            f"The session will be automatically refreshed based on Moodle's session expiry time.",
+            f"The session will be automatically refreshed based on Moodle's session expiry time.\n\n"
+            f"{'✅ OIDC auto-recovery is enabled for this session.' if oidc_data else ''}",
             reply_markup=keyboard,
             parse_mode="Markdown",
         )
