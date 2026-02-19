@@ -18,7 +18,11 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from filoutil.commands.admin import db_query, shell_command
-from filoutil.commands.admin_users import admin_users_callback, admin_users_command
+from filoutil.commands.admin_users import (
+    admin_users_callback,
+    admin_users_command,
+    handle_admin_announcement_input,
+)
 from filoutil.commands.menu import menu_callback, menu_command
 from filoutil.commands.monitor import handle_monitor_edit_input, monitor_callback, monitor_command
 from filoutil.commands.moodle.add_session import (
@@ -175,6 +179,8 @@ def build_app(token: str) -> Application:
             with SessionLocal() as db:
                 update_user_activity(db, update.message.from_user.id)
 
+        if await handle_admin_announcement_input(update, context):
+            return
         if await handle_monitor_edit_input(update, context):
             return
         if await handle_blacklist_word_input(update, context):
@@ -191,7 +197,7 @@ def build_app(token: str) -> Application:
         # If not handled by anything else, we could just ignore or log
         pass
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(MessageHandler(~filters.COMMAND, message_handler))
 
     async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle unrecognized commands."""

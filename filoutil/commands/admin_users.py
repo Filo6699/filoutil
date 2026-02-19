@@ -22,6 +22,7 @@ from filoutil.db.users import get_user_by_telegram_id
 logger = logging.getLogger(__name__)
 
 USERS_PER_PAGE = 10
+ANNOUNCEMENT_PENDING_KEY = "admin_announcement_pending"
 
 
 def get_user_list_keyboard(users: list, page: int = 0) -> InlineKeyboardMarkup:
@@ -67,6 +68,15 @@ def get_user_list_keyboard(users: list, page: int = 0) -> InlineKeyboardMarkup:
     # Quiet hours management button
     keyboard.append(
         [InlineKeyboardButton("🔇 Quiet Hours", callback_data="admin:quiet_hours:menu")]
+    )
+
+    # Announcement broadcast button
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                "📣 Make Announcement", callback_data="admin_users:announcement:start"
+            )
+        ]
     )
 
     # Back to main menu button
@@ -526,8 +536,122 @@ async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"Failed to send permission notification to user {user_id}: {e}")
                 await query.answer("❌ Failed to send notification.", show_alert=True)
 
+    elif action == "announcement":
+        sub_action = data[2] if len(data) > 2 else ""
+
+        if sub_action == "start":
+            context.user_data[ANNOUNCEMENT_PENDING_KEY] = True
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancel", callback_data="admin_users:announcement:cancel"
+                        )
+                    ]
+                ]
+            )
+            await query.edit_message_text(
+                "📣 *Announcement Mode*\n\n"
+                "Send the next message you want to broadcast to all whitelisted users.\n"
+                "The bot will resend your message to every whitelisted user in DM.",
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            return
+
+        if sub_action == "cancel":
+            context.user_data.pop(ANNOUNCEMENT_PENDING_KEY, None)
+            # Return to user list page 0
+            with SessionLocal() as db:
+                from sqlalchemy import select
+
+                from filoutil.db.models import User
+
+                users = db.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+                total_users = len(users)
+                total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE if users else 1
+                text = (
+                    f"👥 *User Management*\n\n"
+                    f"*Total Users:* {total_users}\n\n"
+                    f"*Page 1 of {total_pages}*\n\n"
+                )
+                for user in users[:USERS_PER_PAGE]:
+                    username_display = escape_markdown(user.username or "No username", version=1)
+                    whitelist_status = "✅" if user.whitelisted else "❌"
+                    role_display = "👑 Admin" if user.role == "admin" else "👤 User"
+                    text += f"{whitelist_status} {role_display}: {username_display}\n"
+
+                reply_markup = get_user_list_keyboard(users, page=0)
+                await query.edit_message_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown",
+                )
+            return
+
+        await query.answer("❌ Invalid request.", show_alert=True)
+        return
+
     elif action == "quiet_hours":
         # Handle quiet hours management
         from filoutil.commands.moodle.quiet_hours import quiet_hours_callback
 
         await quiet_hours_callback(update, context)
+
+
+async def handle_admin_announcement_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    """Handle admin announcement broadcast message forwarding."""
+    if not update.message:
+        return False
+
+    if not context.user_data.get(ANNOUNCEMENT_PENDING_KEY):
+        return False
+
+    # Clear state immediately so one message == one broadcast
+    context.user_data.pop(ANNOUNCEMENT_PENDING_KEY, None)
+
+    admin_user = update.message.from_user
+    if not admin_user:
+        return False
+
+    with SessionLocal() as db:
+        from sqlalchemy import select
+
+        from filoutil.db.models import User
+
+        db_admin = get_user_by_telegram_id(db, admin_user.id)
+        if not db_admin or db_admin.role != "admin":
+            await update.message.reply_text("❌ This command is only available to admins.")
+            return True
+
+        recipients = db.execute(select(User).where(User.whitelisted.is_(True))).scalars().all()
+
+    if not recipients:
+        await update.message.reply_text("❌ No whitelisted users found.")
+        return True
+
+    success_count = 0
+    failed_count = 0
+
+    for recipient in recipients:
+        try:
+            await context.bot.copy_message(
+                chat_id=recipient.telegram_id,
+                from_chat_id=update.message.chat_id,
+                message_id=update.message.message_id,
+            )
+            success_count += 1
+        except Exception as e:
+            failed_count += 1
+            logger.warning(
+                "Announcement delivery failed for telegram_id=%s: %s",
+                recipient.telegram_id,
+                e,
+            )
+
+    await update.message.reply_text(
+        f"📣 Announcement sent.\n✅ Delivered: {success_count}\n❌ Failed: {failed_count}"
+    )
+    return True
