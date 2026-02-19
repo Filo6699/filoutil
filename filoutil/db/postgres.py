@@ -78,6 +78,11 @@ def run_migrations():
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE session_refresh ADD COLUMN name VARCHAR"))
             logger.info("Migration completed: added 'name' column.")
+        if "oidc_data" not in columns:
+            logger.info("Adding missing column 'oidc_data' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE session_refresh ADD COLUMN oidc_data JSON"))
+            logger.info("Migration completed: added 'oidc_data' column.")
 
     # Create user_permissions table if it doesn't exist (backwards compatible migration)
     # Note: Base.metadata.create_all() is called before this, so if SQLAlchemy created it,

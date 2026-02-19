@@ -2,61 +2,49 @@
 
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from filoutil.auth import require_module_permission
+from filoutil.commands.moodle.add_session import (
+    clear_moodle_add_wizard_state,
+    start_moodle_add_wizard,
+)
 from filoutil.db.postgres import SessionLocal
 from filoutil.db.session_refresh import get_active_sessions_for_user, get_user_refresh_interval
 from filoutil.db.users import get_user_by_telegram_id
 
 logger = logging.getLogger(__name__)
+OIDC_COOKIE_GUIDE_IMAGE_PATH = Path(__file__).resolve().parents[3] / "assets" / "oidc_cookie_guide.png"
 
 # Security notice text for Moodle session agreement
 MOODLE_SESSION_SECURITY_NOTICE = (
     "⚠️ *Security Notice & Terms*\n\n"
-    "Before adding a Moodle session, please read this carefully:\n\n"
-    "*What you're sharing:*\n"
-    "• `MoodleSession` cookie - your active login session\n"
-    "• `sesskey` - session security key\n\n"
-    "⚠️ By sharing these credentials with this bot, you are granting "
-    "it full access to your Moodle account. The bot will be able to:\n"
-    "• View your courses, grades, and notifications\n"
-    "• Access any data visible in your Moodle account\n"
-    "• Perform actions on your behalf\n\n"
-    "Only use this bot if you trust the developers.\n\n"
-    "*How to get these values:*\n"
-    "1. Open your Moodle site in a browser and log in\n"
-    "2. Press F12 to open Developer Tools\n"
-    "3. Go to Application/Storage → Cookies\n"
-    "4. Find and copy the `MoodleSession` cookie value\n"
-    "5. Go to Console tab and run: `M.cfg.sesskey`\n"
-    "6. Copy the sesskey value\n\n"
+    "By adding a session you grant the bot full Moodle access on your behalf.\n\n"
+    "*Fast option:*\n"
+    "_Grants immediate full Moodle account access._\n"
+    "• `MoodleSession`\n"
+    "• bot auto-fetches `sesskey` from Moodle page context\n\n"
+    "*Autonomous recovery (recommended):*\n"
+    "• `oidc.microsoft_cookies`\n\n"
+    "_Grants the bot Microsoft OIDC SSO cookies for Moodle sign-in: it can auto-login and re-issue `MoodleSession` (full Moodle access while cookies remain valid)._\n\n"
     "*Please confirm both statements below:*"
 )
 
 # Russian version of the security notice
 MOODLE_SESSION_SECURITY_NOTICE_RU = (
     "⚠️ *Уведомление о безопасности и условия*\n\n"
-    "Перед добавлением сессии Moodle, пожалуйста, внимательно прочитайте:\n\n"
-    "*Что вы передаёте:*\n"
-    "• Cookie `MoodleSession` - ваша активная сессия входа\n"
-    "• `sesskey` - ключ безопасности сессии\n\n"
-    "⚠️ Передавая эти учётные данные этому боту, вы предоставляете "
-    "ему полный доступ к вашему аккаунту Moodle. Бот сможет:\n"
-    "• Просматривать ваши курсы, оценки и уведомления\n"
-    "• Получать доступ к любым данным, видимым в вашем аккаунте Moodle\n"
-    "• Выполнять действия от вашего имени\n\n"
-    "Используйте этого бота только если вы доверяете разработчикам.\n\n"
-    "*Как получить эти значения:*\n"
-    "1. Откройте ваш сайт Moodle в браузере и войдите в систему\n"
-    "2. Нажмите F12 для открытия инструментов разработчика\n"
-    "3. Перейдите в Application/Storage → Cookies\n"
-    "4. Найдите и скопируйте значение cookie `MoodleSession`\n"
-    "5. Перейдите во вкладку Console и выполните: `M.cfg.sesskey`\n"
-    "6. Скопируйте значение sesskey\n\n"
+    "Добавляя сессию, вы даёте боту полный доступ к вашему Moodle-аккаунту.\n\n"
+    "*Быстрый вариант:*\n"
+    "_Даёт немедленный полный доступ к Moodle-аккаунту._\n"
+    "• `MoodleSession`\n"
+    "• бот автоматически получает `sesskey` из контекста страницы Moodle\n\n"
+    "*Автовосстановление (рекомендуется):*\n"
+    "• `oidc.microsoft_cookies`\n\n"
+    "_Передаёт боту Microsoft OIDC SSO-cookies для входа в Moodle: он может автоматически входить и заново получать `MoodleSession` (полный доступ к Moodle, пока cookies действительны)._\n\n"
     "*Пожалуйста, подтвердите оба утверждения ниже:*"
 )
 
@@ -98,6 +86,7 @@ async def moodle_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle /moodle command to show the Moodle menu."""
     if not await require_module_permission(update, context, "moodle"):
         return
+    clear_moodle_add_wizard_state(context)
 
     with SessionLocal() as db:
         user = get_user_by_telegram_id(db, update.message.from_user.id)
@@ -121,6 +110,7 @@ async def moodle_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_moodle_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Helper function to show the Moodle menu."""
+    clear_moodle_add_wizard_state(context)
     with SessionLocal() as db:
         user = get_user_by_telegram_id(db, query.from_user.id)
         if not user:
@@ -254,9 +244,11 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.answer()
 
     if action == "menu":
+        clear_moodle_add_wizard_state(context)
         await show_moodle_menu(query, context)
 
     elif action == "sessions":
+        clear_moodle_add_wizard_state(context)
         # Show sessions list
         from filoutil.commands.moodle.sessions import show_sessions_list
 
@@ -361,7 +353,18 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = InlineKeyboardMarkup(keyboard_buttons)
 
             try:
-                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+                if query.message and query.message.photo:
+                    await query.message.delete()
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(
+                        text, reply_markup=keyboard, parse_mode="Markdown"
+                    )
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
@@ -448,7 +451,18 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             try:
                 await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
             except BadRequest as e:
-                if "Message is not modified" not in str(e):
+                err = str(e)
+                if "There is no text in the message to edit" in err:
+                    try:
+                        await query.edit_message_caption(
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode="Markdown",
+                        )
+                    except BadRequest as caption_error:
+                        if "Message is not modified" not in str(caption_error):
+                            raise
+                elif "Message is not modified" not in err:
                     raise
 
     elif action == "switch_lang":
@@ -532,6 +546,7 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     raise
 
     elif action == "finalize_agreement":
+        clear_moodle_add_wizard_state(context)
         # Handle completion of agreement (both boxes checked)
         with SessionLocal() as db:
             user = get_user_by_telegram_id(db, query.from_user.id)
@@ -547,7 +562,7 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await query.answer("⚠️ Please confirm both statements first.", show_alert=True)
                 return
 
-            # Show the add session instructions
+            # Show method selection
             active_sessions = get_active_sessions_for_user(db, user.id)
             session_count = len(active_sessions)
             max_sessions = 5
@@ -555,19 +570,22 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text = (
                 f"✅ *Agreement Confirmed*\n\n"
                 f"*Current sessions:* {session_count}/{max_sessions}\n\n"
-                f"*How to get your session credentials:*\n\n"
-                f"1. Open Moodle in browser and log in\n"
-                f"2. Press F12 → Application/Storage → Cookies\n"
-                f"3. Copy `MoodleSession` cookie value\n"
-                f"4. In Console, run: `M.cfg.sesskey`\n"
-                f"5. Copy the sesskey value\n\n"
-                f"*Then send:*\n"
-                '`/moodle_add {"sesskey": "abc123", "moodleSession": "xyz789", "name": "My Session"}`\n\n'
-                f"*Note:* Maximum {max_sessions} active sessions allowed."
+                "Choose authorization method:"
             )
             keyboard = InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
+                    [
+                        InlineKeyboardButton(
+                            "1. Using MoodleSession (short-term)",
+                            callback_data="moodle:add_session_method:moodle",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "2. Using OIDC (long-term)",
+                            callback_data="moodle:add_session_method:oidc",
+                        )
+                    ],
                     [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
                 ]
             )
@@ -578,7 +596,8 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     raise
 
     elif action == "add_session":
-        # Check current session count and show instructions
+        clear_moodle_add_wizard_state(context)
+        # Check current session count and show method selection
         with SessionLocal() as db:
             user = get_user_by_telegram_id(db, query.from_user.id)
             if not user:
@@ -673,19 +692,22 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 text = (
                     f"➕ *Add Moodle Session*\n\n"
                     f"*Current sessions:* {session_count}/{max_sessions}\n\n"
-                    f"*How to get your session credentials:*\n\n"
-                    f"1. Open Moodle in browser and log in\n"
-                    f"2. Press F12 → Application/Storage → Cookies\n"
-                    f"3. Copy `MoodleSession` cookie value\n"
-                    f"4. In Console, run: `M.cfg.sesskey`\n"
-                    f"5. Copy the sesskey value\n\n"
-                    f"*Then send:*\n"
-                    '`/moodle_add {"sesskey": "abc123", "moodleSession": "xyz789", "name": "My Session"}`\n\n'
-                    f"*Note:* Maximum {max_sessions} active sessions allowed."
+                    "Choose authorization method:"
                 )
                 keyboard = InlineKeyboardMarkup(
                     [
-                        [InlineKeyboardButton("📋 My Sessions", callback_data="moodle:sessions")],
+                        [
+                            InlineKeyboardButton(
+                                "1. Using MoodleSession (short-term)",
+                                callback_data="moodle:add_session_method:moodle",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "2. Using OIDC (long-term)",
+                                callback_data="moodle:add_session_method:oidc",
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 "⬅️ Back to Moodle Menu", callback_data="moodle:menu"
@@ -695,10 +717,88 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
 
             try:
-                await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+                if query.message and query.message.photo:
+                    await query.message.delete()
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(
+                        text, reply_markup=keyboard, parse_mode="Markdown"
+                    )
             except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
+
+    elif action == "add_session_method":
+        method = data[2] if len(data) > 2 else ""
+        with SessionLocal() as db:
+            user = get_user_by_telegram_id(db, query.from_user.id)
+            if not user:
+                try:
+                    await query.edit_message_text("❌ User not found.")
+                except BadRequest:
+                    pass
+                return
+
+            if method == "moodle":
+                start_moodle_add_wizard(context, query.from_user.id, "moodle")
+                text = (
+                    "1️⃣ *Using MoodleSession*\n\n"
+                    "How to get value:\n"
+                    "1. Open Moodle and log in\n"
+                    "2. DevTools → Cookies: copy `MoodleSession`\n"
+                    "3. Send `MoodleSession` into this chat"
+                )
+            elif method == "oidc":
+                start_moodle_add_wizard(context, query.from_user.id, "oidc")
+                text = (
+                    "2️⃣ *Using OIDC*\n\n"
+                    "Long-term method with auto-recovery.\n\n"
+                    "1. Open:\n"
+                    "`https://login.microsoftonline.com/organizations/oauth2/authorize`\n"
+                    "(error page is expected)\n"
+                    "2. DevTools → Storage/Application → Cookies\n"
+                    "3. Send `ESTSAUTHPERSISTENT` value into this chat"
+                )
+            else:
+                await query.answer("❌ Invalid method.", show_alert=True)
+                return
+
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("⬅️ Back", callback_data="moodle:add_session")],
+                ]
+            )
+            if method == "oidc" and OIDC_COOKIE_GUIDE_IMAGE_PATH.exists():
+                try:
+                    with OIDC_COOKIE_GUIDE_IMAGE_PATH.open("rb") as image_file:
+                        await context.bot.send_photo(
+                            chat_id=query.message.chat_id,
+                            photo=image_file,
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode="Markdown",
+                        )
+                    await query.message.delete()
+                except Exception as e:
+                    logger.warning("Failed to send OIDC guide image: %s", e)
+                    try:
+                        await query.edit_message_text(
+                            text, reply_markup=keyboard, parse_mode="Markdown"
+                        )
+                    except BadRequest as be:
+                        if "Message is not modified" not in str(be):
+                            raise
+            else:
+                try:
+                    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        raise
 
     elif action == "notifications":
         # Show notifications list

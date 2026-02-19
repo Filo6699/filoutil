@@ -13,6 +13,7 @@ def create_session_refresh(
     moodleSession: str,
     refresh_interval_s: int,
     name: str | None = None,
+    oidc_data: dict | None = None,
 ) -> SessionRefresh:
     """Create a new session refresh job."""
     session_refresh = SessionRefresh(
@@ -22,6 +23,7 @@ def create_session_refresh(
         refresh_interval_s=refresh_interval_s,
         status="running",
         name=name,
+        oidc_data=oidc_data,
     )
     db.add(session_refresh)
     db.commit()
