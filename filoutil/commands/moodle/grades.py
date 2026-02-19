@@ -286,7 +286,7 @@ async def show_gradebook(
 
     if not grades:
         text = (
-            f"📊 *{course.course_name}*\n\n"
+            f"📊 *{html.unescape(course.course_name)}*\n\n"
             "No grades available yet.\n\n"
             "Grades will appear here once they are synced."
         )

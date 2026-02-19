@@ -654,7 +654,8 @@ async def send_grade_notification(
     """
     try:
         grade_data = grade_change["grade_data"]
-        item_name = grade_data.get("itemname", "Unknown")
+        item_name = html.unescape(grade_data.get("itemname", "Unknown"))
+        course_name = html.unescape(course.course_name)
         change_type = grade_change["type"]
         old_grade = grade_change.get("old_grade", "N/A")
         new_grade = grade_change.get("new_grade", "N/A")
@@ -675,7 +676,7 @@ async def send_grade_notification(
         else:
             message = f"📊 *Grade Update*\n\n"
 
-        message += f"*Course:* {course.course_name}\n"
+        message += f"*Course:* {course_name}\n"
         message += f"*Assignment:* {item_name}\n"
 
         if change_type == "new":
