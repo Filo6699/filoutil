@@ -1,5 +1,6 @@
 """Commands for viewing and managing Moodle notifications."""
 
+import html
 import logging
 from datetime import datetime, timezone
 
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 
 from filoutil.auth import require_module_permission
 from filoutil.commands.notification_settings import get_user_notification_settings
@@ -20,26 +22,6 @@ from filoutil.utils.keyboard import arrange_buttons_in_rows
 logger = logging.getLogger(__name__)
 
 DEFAULT_NOTIFICATIONS_PER_PAGE = 10
-
-
-def escape_markdown(text: str) -> str:
-    """
-    Escape special Markdown characters for Telegram.
-
-    Args:
-        text: Text that may contain Markdown special characters
-
-    Returns:
-        Text with special characters escaped
-    """
-    if not text:
-        return ""
-    # Escape special Markdown characters: * _ [ ] ( ) ` ~
-    special_chars = ["*", "_", "[", "]", "(", ")", "`", "~"]
-    escaped = text
-    for char in special_chars:
-        escaped = escaped.replace(char, f"\\{char}")
-    return escaped
 
 
 def format_time_ago(timestamp: int) -> str:
@@ -107,13 +89,13 @@ def format_notification_preview(notification, index: int) -> str:
     """Format a notification for list display."""
     time_str = format_time_ago(notification.timecreated)
 
-    subject = notification.shortenedsubject or notification.subject or "No subject"
+    subject = html.unescape(notification.shortenedsubject or notification.subject or "No subject")
     # Truncate if too long
     if len(subject) > 50:
         subject = subject[:47] + "..."
 
     # Escape Markdown special characters
-    subject = escape_markdown(subject)
+    subject = escape_markdown(subject, version=1)
 
     return f"*{index}.* {subject}\n   ⏰ {time_str}"
 
@@ -273,12 +255,22 @@ async def show_notification_detail(
     absolute_time = format_time_for_display(notification_dt)
 
     # Escape Markdown special characters in notification content
-    subject = escape_markdown(notification.subject or "")
+    subject = escape_markdown(html.unescape(notification.subject or ""), version=1)
     smallmessage = (
-        escape_markdown(notification.smallmessage or "") if notification.smallmessage else None
+        escape_markdown(html.unescape(notification.smallmessage or ""), version=1)
+        if notification.smallmessage
+        else None
     )
-    component = escape_markdown(notification.component or "") if notification.component else None
-    eventtype = escape_markdown(notification.eventtype or "") if notification.eventtype else None
+    component = (
+        escape_markdown(html.unescape(notification.component or ""), version=1)
+        if notification.component
+        else None
+    )
+    eventtype = (
+        escape_markdown(html.unescape(notification.eventtype or ""), version=1)
+        if notification.eventtype
+        else None
+    )
 
     text = f"🔔 *Notification Details*\n\n"
     text += f"*Time:* {time_ago}\n"

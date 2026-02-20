@@ -3,6 +3,7 @@
 This module handles fetching notifications from Moodle and sending them to users.
 """
 
+import html
 import logging
 import time
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from telegram.ext import Application
+from telegram.helpers import escape_markdown
 
 from filoutil.db.models import MoodleNotification, SessionRefresh, User
 from filoutil.db.postgres import SessionLocal
@@ -23,26 +25,6 @@ LMS_BASE_URL = "https://lms.astanait.edu.kz"
 LMS_ENDPOINT = "/lib/ajax/service.php"
 DEFAULT_NOTIFICATION_LIMIT = 20
 DEFAULT_NOTIFICATION_OFFSET = 0
-
-
-def escape_markdown(text: str) -> str:
-    """
-    Escape special Markdown characters for Telegram.
-
-    Args:
-        text: Text that may contain Markdown special characters
-
-    Returns:
-        Text with special characters escaped
-    """
-    if not text:
-        return ""
-    # Escape special Markdown characters: * _ [ ] ( ) ` ~
-    special_chars = ["*", "_", "[", "]", "(", ")", "`", "~"]
-    escaped = text
-    for char in special_chars:
-        escaped = escaped.replace(char, f"\\{char}")
-    return escaped
 
 
 def format_time_ago(timestamp: int) -> str:
@@ -500,9 +482,13 @@ async def send_notification_to_user(
     try:
         # Format notification message
         # Escape Markdown special characters
-        subject = escape_markdown(notification.subject or "New notification")
+        subject = escape_markdown(
+            html.unescape(notification.subject or "New notification"), version=1
+        )
         smallmessage = (
-            escape_markdown(notification.smallmessage or "") if notification.smallmessage else None
+            escape_markdown(html.unescape(notification.smallmessage or ""), version=1)
+            if notification.smallmessage
+            else None
         )
         time_str = format_time_ago(notification.timecreated)
         context_link = notification.contexturl or ""
