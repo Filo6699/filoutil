@@ -26,6 +26,24 @@ from filoutil.db.monitors import (
 from filoutil.db.status import get_admins
 
 logger = logging.getLogger(__name__)
+SSL_EXPIRY_ALERT_THRESHOLDS = [30, 25, 20, 15, 10, 5, 3, 2, 1, 0]
+
+
+def _ssl_days_left(ssl_expiry: datetime, now: datetime) -> int:
+    """Return calendar days left until expiry in UTC."""
+    return (ssl_expiry.astimezone(timezone.utc).date() - now.astimezone(timezone.utc).date()).days
+
+
+def _should_send_ssl_alert(
+    current_days_left: int, previous_days_left: int | None, thresholds: list[int]
+) -> bool:
+    """Alert once per threshold when crossing from above to at/below that threshold."""
+    current_days_left = max(current_days_left, 0)
+    if previous_days_left is None:
+        return current_days_left in thresholds
+
+    previous_days_left = max(previous_days_left, 0)
+    return any(previous_days_left > t >= current_days_left for t in thresholds)
 
 
 async def get_ssl_expiry(url: str, timeout: int = 5) -> datetime | None:
@@ -171,9 +189,19 @@ async def process_status_change(
 
     # SSL Expiry Alert
     if ssl_expiry:
-        days_left = (ssl_expiry - datetime.now(timezone.utc)).days
-        if days_left in [30, 14, 7, 3, 1, 0]:
-            ssl_alert = f"⚠️ *SSL Expiry Warning:* {monitor.name}\nURL: {monitor.url}\nExpires in: {days_left} days ({ssl_expiry.strftime('%Y-%m-%d')})"
+        now = datetime.now(timezone.utc)
+        days_left = _ssl_days_left(ssl_expiry, now)
+
+        recent_ssl_runs = [run for run in recent if run.ssl_expiry]
+        previous_days_left = None
+        if len(recent_ssl_runs) > 1:
+            previous_days_left = _ssl_days_left(
+                recent_ssl_runs[1].ssl_expiry.replace(tzinfo=timezone.utc), now
+            )
+
+        if _should_send_ssl_alert(days_left, previous_days_left, SSL_EXPIRY_ALERT_THRESHOLDS):
+            shown_days_left = max(days_left, 0)
+            ssl_alert = f"⚠️ *SSL Expiry Warning:* {monitor.name}\nURL: {monitor.url}\nExpires in: {shown_days_left} days ({ssl_expiry.strftime('%Y-%m-%d')})"
             await queue_notification(db, ssl_alert)
 
     if alert_message:
