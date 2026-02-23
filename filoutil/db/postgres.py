@@ -83,6 +83,34 @@ def run_migrations():
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE session_refresh ADD COLUMN oidc_data JSON"))
             logger.info("Migration completed: added 'oidc_data' column.")
+        if "oidc_retry_count" not in columns:
+            logger.info("Adding missing column 'oidc_retry_count' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE session_refresh ADD COLUMN oidc_retry_count INTEGER DEFAULT 0"
+                    )
+                )
+            logger.info("Migration completed: added 'oidc_retry_count' column.")
+        if "oidc_next_retry_at" not in columns:
+            logger.info("Adding missing column 'oidc_next_retry_at' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE session_refresh ADD COLUMN oidc_next_retry_at TIMESTAMP")
+                )
+            logger.info("Migration completed: added 'oidc_next_retry_at' column.")
+        if "oidc_last_attempt_at" not in columns:
+            logger.info("Adding missing column 'oidc_last_attempt_at' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE session_refresh ADD COLUMN oidc_last_attempt_at TIMESTAMP")
+                )
+            logger.info("Migration completed: added 'oidc_last_attempt_at' column.")
+        if "oidc_last_error" not in columns:
+            logger.info("Adding missing column 'oidc_last_error' to session_refresh table...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE session_refresh ADD COLUMN oidc_last_error VARCHAR"))
+            logger.info("Migration completed: added 'oidc_last_error' column.")
 
     # Create user_permissions table if it doesn't exist (backwards compatible migration)
     # Note: Base.metadata.create_all() is called before this, so if SQLAlchemy created it,
