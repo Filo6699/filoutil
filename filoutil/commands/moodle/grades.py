@@ -7,11 +7,17 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 
 from filoutil.db.moodle_courses import get_course_grades, get_user_courses
 from filoutil.db.postgres import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_moodle_markdown(value: Any) -> str:
+    """Unescape HTML entities and escape Telegram Markdown (v1)."""
+    return escape_markdown(html.unescape(str(value or "")), version=1)
 
 
 def get_grades_menu_keyboard(
@@ -211,31 +217,31 @@ def format_gradebook(course_name: str, grades: list) -> str:
             other_grades.append((item_name_unescaped, grade_display))
 
     # Build the message (unescape HTML entities in course name)
-    text = f"*{html.unescape(course_name)}*{scholarship_emoji}\n\n"
+    text = f"*{_escape_moodle_markdown(course_name)}*{scholarship_emoji}\n\n"
 
     # Add course total and GPA if available
     if course_total is not None:
-        text += f"*TOTAL* → {course_total}\n"
+        text += f"*TOTAL* → {_escape_moodle_markdown(course_total)}\n"
     if gpa is not None:
-        text += f"*GPA* → {gpa}\n"
+        text += f"*GPA* → {_escape_moodle_markdown(gpa)}\n"
 
     if course_total is not None or gpa is not None:
         text += "\n"
 
     # Always show register fields (even if empty, but we skip empty ones)
     if register_midterm:
-        text += f"{register_midterm[0]} → {register_midterm[1]}\n"
+        text += f"{_escape_moodle_markdown(register_midterm[0])} → {_escape_moodle_markdown(register_midterm[1])}\n"
     if register_endterm:
-        text += f"{register_endterm[0]} → {register_endterm[1]}\n"
+        text += f"{_escape_moodle_markdown(register_endterm[0])} → {_escape_moodle_markdown(register_endterm[1])}\n"
     if register_term:
-        text += f"{register_term[0]} → {register_term[1]}\n"
+        text += f"{_escape_moodle_markdown(register_term[0])} → {_escape_moodle_markdown(register_term[1])}\n"
     if register_final:
-        text += f"{register_final[0]} → {register_final[1]}\n"
+        text += f"{_escape_moodle_markdown(register_final[0])} → {_escape_moodle_markdown(register_final[1])}\n"
     if register_total:
         display_name = register_total[0].replace("(not to edit) ", "")
         if display_name.lower() == "registertotal":
             display_name = "Register Total"
-        text += f"{display_name} → {register_total[1]}\n"
+        text += f"{_escape_moodle_markdown(display_name)} → {_escape_moodle_markdown(register_total[1])}\n"
 
     # Add spacing before attendance
     if register_midterm or register_endterm or register_term or register_final or register_total:
@@ -243,21 +249,27 @@ def format_gradebook(course_name: str, grades: list) -> str:
 
     # Attendance
     if attendance:
-        text += f"{attendance[0]} → {attendance[1]}\n"
+        text += (
+            f"{_escape_moodle_markdown(attendance[0])} → {_escape_moodle_markdown(attendance[1])}\n"
+        )
 
     # Add spacing before assignments if there are any
     if assignments:
         text += "\n"
         # Add assignments
         for item_name, grade_display in assignments:
-            text += f"{item_name} → {grade_display}\n"
+            text += (
+                f"{_escape_moodle_markdown(item_name)} → {_escape_moodle_markdown(grade_display)}\n"
+            )
 
     # Add other grades if any
     if other_grades:
         if assignments:
             text += "\n"
         for item_name, grade_display in other_grades:
-            text += f"{item_name} → {grade_display}\n"
+            text += (
+                f"{_escape_moodle_markdown(item_name)} → {_escape_moodle_markdown(grade_display)}\n"
+            )
 
     return text
 
@@ -286,7 +298,7 @@ async def show_gradebook(
 
     if not grades:
         text = (
-            f"📊 *{html.unescape(course.course_name)}*\n\n"
+            f"📊 *{_escape_moodle_markdown(course.course_name)}*\n\n"
             "No grades available yet.\n\n"
             "Grades will appear here once they are synced."
         )
