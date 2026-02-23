@@ -6,6 +6,7 @@ import re
 from urllib.parse import unquote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from filoutil.auth import require_module_permission
@@ -39,6 +40,17 @@ def start_moodle_add_wizard(
     if method == "oidc":
         state["step"] = "estsauthpersistent"
     context.user_data[WIZARD_KEY] = state
+
+
+async def _delete_sensitive_messages(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list[int]
+) -> None:
+    unique_message_ids = list(dict.fromkeys(message_ids))
+    for message_id in unique_message_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except BadRequest:
+            logger.debug("Could not delete sensitive message %s in chat %s", message_id, chat_id)
 
 
 def _extract_param(text: str, name: str) -> str | None:
@@ -80,7 +92,12 @@ def _extract_moodle_session(text: str) -> str | None:
 
     # Accept direct cookie value input (value-only message).
     stripped = text.strip().strip("\"'`")
-    if stripped and "=" not in stripped and len(stripped) > 20 and re.fullmatch(r"[A-Za-z0-9]+", stripped):
+    if (
+        stripped
+        and "=" not in stripped
+        and len(stripped) > 20
+        and re.fullmatch(r"[A-Za-z0-9]+", stripped)
+    ):
         return stripped
     return None
 
@@ -142,6 +159,11 @@ async def _create_session_from_values(
     session_name: str | None = None,
     oidc_data: dict | None = None,
 ) -> bool:
+    """Create and validate a Moodle session from parsed values.
+
+    Returns:
+        True if the session was successfully created, otherwise False.
+    """
     if not update.message or not update.message.from_user:
         return False
 
@@ -149,7 +171,7 @@ async def _create_session_from_values(
         user = get_user_by_telegram_id(db, update.message.from_user.id)
         if not user:
             await update.message.reply_text("❌ User not found.")
-            return True
+            return False
 
         if not user.moodle_session_agreement or not user.moodle_student_confirmation:
             keyboard = InlineKeyboardMarkup(
@@ -166,7 +188,7 @@ async def _create_session_from_values(
                 "⚠️ Agreement required first.",
                 reply_markup=keyboard,
             )
-            return True
+            return False
 
         active_sessions = get_active_sessions_for_user(db, user.id)
         max_sessions = 5
@@ -174,14 +196,14 @@ async def _create_session_from_values(
             await update.message.reply_text(
                 f"❌ You already have {len(active_sessions)} active sessions (maximum: {max_sessions})."
             )
-            return True
+            return False
 
         valid, moodle_user_id, error_msg = await fetch_moodle_user_id(sesskey, moodle_session)
         if not valid:
             await update.message.reply_text(
                 f"❌ Could not validate session credentials: {error_msg or 'Unknown error'}"
             )
-            return True
+            return False
 
         refresh_interval = get_user_refresh_interval(db, user.id)
         session_refresh = create_session_refresh(
@@ -225,7 +247,11 @@ async def moodle_add_session_command(update: Update, context: ContextTypes.DEFAU
         return
 
     message_text = update.message.text.strip()
-    json_part = message_text[len("/moodle_add") :].strip() if message_text.startswith("/moodle_add") else message_text
+    json_part = (
+        message_text[len("/moodle_add") :].strip()
+        if message_text.startswith("/moodle_add")
+        else message_text
+    )
     if not json_part:
         await update.message.reply_text(
             "Use /moodle menu and choose Add Session for step-by-step setup."
@@ -268,16 +294,22 @@ async def moodle_add_session_command(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("❌ Missing credentials. Provide `moodleSession`.")
         return
 
-    await _create_session_from_values(
+    created = await _create_session_from_values(
         update=update,
         sesskey=sesskey,
         moodle_session=moodle_session,
         session_name=session_name,
         oidc_data=oidc_data,
     )
+    if created and update.message:
+        await _delete_sensitive_messages(
+            context, update.message.chat_id, [update.message.message_id]
+        )
 
 
-async def handle_moodle_add_session_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+async def handle_moodle_add_session_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
     """Handle step-by-step text input for add-session wizard."""
     if not update.message or not update.message.text or not update.message.from_user:
         return False
@@ -320,8 +352,12 @@ async def handle_moodle_add_session_input(update: Update, context: ContextTypes.
                 )
                 return True
 
-        clear_moodle_add_wizard_state(context)
-        await _create_session_from_values(update, sesskey, moodle_session)
+        created = await _create_session_from_values(update, sesskey, moodle_session)
+        if created:
+            clear_moodle_add_wizard_state(context)
+            await _delete_sensitive_messages(
+                context, update.message.chat_id, [update.message.message_id]
+            )
         return True
 
     if method == "oidc":
@@ -339,13 +375,17 @@ async def handle_moodle_add_session_input(update: Update, context: ContextTypes.
                 )
                 return True
 
-            clear_moodle_add_wizard_state(context)
-            await _create_session_from_values(
+            created = await _create_session_from_values(
                 update=update,
                 sesskey=sesskey,
                 moodle_session=moodle_session,
                 oidc_data=updated_oidc_data or oidc_data,
             )
+            if created:
+                clear_moodle_add_wizard_state(context)
+                await _delete_sensitive_messages(
+                    context, update.message.chat_id, [update.message.message_id]
+                )
             return True
 
         if step == "estsauthpersistent":
@@ -358,6 +398,7 @@ async def handle_moodle_add_session_input(update: Update, context: ContextTypes.
                 return True
 
             state["ESTSAUTHPERSISTENT"] = value
+            state.setdefault("sensitive_message_ids", []).append(update.message.message_id)
             state["step"] = "estsauth"
             context.user_data[WIZARD_KEY] = state
             await update.message.reply_text(
@@ -393,13 +434,19 @@ async def handle_moodle_add_session_input(update: Update, context: ContextTypes.
                 )
                 return True
 
-            clear_moodle_add_wizard_state(context)
-            await _create_session_from_values(
+            sensitive_message_ids = list(state.get("sensitive_message_ids", []))
+            sensitive_message_ids.append(update.message.message_id)
+            created = await _create_session_from_values(
                 update=update,
                 sesskey=sesskey,
                 moodle_session=moodle_session,
                 oidc_data=updated_oidc_data or oidc_data,
             )
+            if created:
+                clear_moodle_add_wizard_state(context)
+                await _delete_sensitive_messages(
+                    context, update.message.chat_id, sensitive_message_ids
+                )
             return True
 
         # Unknown state fallback
