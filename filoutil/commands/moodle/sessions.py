@@ -186,7 +186,12 @@ async def stop_session_callback(
         await query.answer("❌ Session is not running.", show_alert=True)
         return
 
-    stopped_session = stop_session_refresh(db, session_id, status="stopped")
+    stopped_session = stop_session_refresh(
+        db,
+        session_id,
+        status="stopped",
+        clear_oidc_data=True,
+    )
 
     if stopped_session:
         # Calculate duration

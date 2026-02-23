@@ -65,7 +65,10 @@ def get_session_refresh_by_id(db: Session, session_id: int) -> SessionRefresh | 
 
 
 def stop_session_refresh(
-    db: Session, session_refresh_id: int, status: str = "stopped"
+    db: Session,
+    session_refresh_id: int,
+    status: str = "stopped",
+    clear_oidc_data: bool = False,
 ) -> SessionRefresh | None:
     """Stop a session refresh job and calculate duration."""
     session_refresh = db.execute(
@@ -75,6 +78,8 @@ def stop_session_refresh(
     if session_refresh:
         session_refresh.ended_at = datetime.now(timezone.utc)
         session_refresh.status = status
+        if clear_oidc_data:
+            session_refresh.oidc_data = None
 
         # Calculate duration in seconds
         if session_refresh.started_at and session_refresh.ended_at:
