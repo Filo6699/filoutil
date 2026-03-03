@@ -18,6 +18,7 @@ from telegram.helpers import escape_markdown
 from filoutil.db.models import MoodleNotification, SessionRefresh, User
 from filoutil.db.postgres import SessionLocal
 from filoutil.moodle_cabinet.request_logger import log_moodle_request
+from filoutil.utils.http import create_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ async def mark_all_notifications_as_read(
     success = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             # Calculate request size (approximate)
             import json
 
@@ -283,7 +284,7 @@ async def fetch_notifications(
     success = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             # Calculate request size (approximate)
             import json
 

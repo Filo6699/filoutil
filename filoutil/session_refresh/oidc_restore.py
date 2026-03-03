@@ -5,6 +5,9 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from filoutil.config import OIDC_RECOVERY_USER_AGENT
+from filoutil.utils.http import create_async_client
+
 logger = logging.getLogger(__name__)
 
 LMS_BASE_URL = "https://lms.astanait.edu.kz"
@@ -100,7 +103,7 @@ async def resolve_sesskey_from_moodle_session(
     root_host = urlparse(base_url).hostname
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             if root_host:
                 client.cookies.set("MoodleSession", cleaned_cookie, domain=root_host, path="/")
             client.cookies.set("MoodleSession", cleaned_cookie)
@@ -157,7 +160,9 @@ def _is_allowed_oidc_host(hostname: str | None) -> bool:
     if not hostname:
         return False
     lowered = hostname.lower()
-    return any(lowered == domain or lowered.endswith(f".{domain}") for domain in ALLOWED_OIDC_DOMAINS)
+    return any(
+        lowered == domain or lowered.endswith(f".{domain}") for domain in ALLOWED_OIDC_DOMAINS
+    )
 
 
 def _normalize_oidc_url(raw_value: object, default_url: str) -> str:
@@ -209,7 +214,11 @@ async def bootstrap_moodle_session_via_oidc(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        async with create_async_client(
+            timeout=30.0,
+            follow_redirects=False,
+            user_agent=OIDC_RECOVERY_USER_AGENT,
+        ) as client:
             for name, value in ms_cookies.items():
                 client.cookies.set(name, value, domain=f".{LOGIN_DOMAIN}", path="/")
 
@@ -283,13 +292,23 @@ async def bootstrap_moodle_session_via_oidc(
                 )
 
             redirect_url = oidc_post_response.headers.get("location") or "/"
-            page_response = await client.get(urljoin(LMS_BASE_URL, redirect_url), follow_redirects=True)
+            page_response = await client.get(
+                urljoin(LMS_BASE_URL, redirect_url), follow_redirects=True
+            )
 
-            moodle_session = client.cookies.get("MoodleSession", domain=urlparse(LMS_BASE_URL).hostname)
+            moodle_session = client.cookies.get(
+                "MoodleSession", domain=urlparse(LMS_BASE_URL).hostname
+            )
             if not moodle_session:
                 moodle_session = client.cookies.get("MoodleSession")
             if not moodle_session:
-                return False, None, None, None, "MoodleSession cookie was not issued after OIDC callback."
+                return (
+                    False,
+                    None,
+                    None,
+                    None,
+                    "MoodleSession cookie was not issued after OIDC callback.",
+                )
 
             sesskey = _extract_sesskey(page_response.text)
             if not sesskey:

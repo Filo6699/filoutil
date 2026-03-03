@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 # Get timezone from environment variable, default to Asia/Almaty
 TIMEZONE_STR = os.getenv("TIMEZONE", "Asia/Almaty")
+HTTP_USER_AGENT = os.getenv("USER_AGENT", "fizbuz")
+OIDC_RECOVERY_USER_AGENT = os.getenv("OIDC_RECOVERY_USER_AGENT", "fizbuz-session-recovery")
 
 try:
     APP_TIMEZONE = ZoneInfo(TIMEZONE_STR)

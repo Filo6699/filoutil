@@ -24,6 +24,7 @@ from filoutil.db.monitors import (
     start_incident,
 )
 from filoutil.db.status import get_admins
+from filoutil.utils.http import create_async_client
 
 logger = logging.getLogger(__name__)
 SSL_EXPIRY_ALERT_THRESHOLDS = [30, 25, 20, 15, 10, 5, 3, 2, 1, 0]
@@ -87,7 +88,7 @@ async def check_monitor(db: Session, monitor: Monitor) -> None:
     ssl_expiry = None
 
     try:
-        async with httpx.AsyncClient(timeout=monitor.timeout_s, follow_redirects=True) as client:
+        async with create_async_client(timeout=monitor.timeout_s, follow_redirects=True) as client:
             headers = monitor.headers or {}
             response = await client.request(monitor.method, monitor.url, headers=headers)
 

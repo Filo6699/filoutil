@@ -14,6 +14,7 @@ from filoutil.db.session_refresh import stop_session_refresh
 from filoutil.db.status import get_admins
 from filoutil.moodle_cabinet.request_logger import log_moodle_request
 from filoutil.session_refresh.oidc_restore import bootstrap_moodle_session_via_oidc
+from filoutil.utils.http import create_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +238,7 @@ async def get_session_time_remaining(
     payload = [{"index": 0, "methodname": "core_session_time_remaining", "args": {}}]
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             response = await client.post(
                 url, params=params, headers=headers, cookies=cookies, json=payload
             )
@@ -317,7 +318,7 @@ async def refresh_session(
     success = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             # Calculate request size (approximate)
             import json
 

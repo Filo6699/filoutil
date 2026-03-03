@@ -28,6 +28,7 @@ from filoutil.db.moodle_courses import (
 from filoutil.db.postgres import SessionLocal
 from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
 from filoutil.moodle_cabinet.request_logger import log_moodle_request
+from filoutil.utils.http import create_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ async def fetch_user_courses(
     success = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             # Calculate request size (approximate)
             import json
 
@@ -192,7 +193,7 @@ async def fetch_course_grades(
     success = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with create_async_client(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url, params=params, headers=headers, cookies=cookies)
 
             response_status_code = response.status_code

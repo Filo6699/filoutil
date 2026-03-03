@@ -50,6 +50,8 @@ docker compose up -d --build
 | `LOG_LEVEL` | No | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `HTTPX_LOG_LEVEL` | No | `WARNING` | HTTPX library logging level |
 | `HEARTBEAT_INTERVAL` | No | `60` | Heartbeat update interval in seconds |
+| `USER_AGENT` | No | `fizbuz` | HTTP `User-Agent` header for outgoing requests |
+| `OIDC_RECOVERY_USER_AGENT` | No | `fizbuz-session-recovery` | HTTP `User-Agent` header used only for OIDC session recovery |
 
 ## Development
 
