@@ -18,7 +18,9 @@ from filoutil.db.session_refresh import get_active_sessions_for_user, get_user_r
 from filoutil.db.users import get_user_by_telegram_id
 
 logger = logging.getLogger(__name__)
-OIDC_COOKIE_GUIDE_IMAGE_PATH = Path(__file__).resolve().parents[3] / "assets" / "oidc_cookie_guide.png"
+OIDC_COOKIE_GUIDE_IMAGE_PATH = (
+    Path(__file__).resolve().parents[3] / "assets" / "oidc_cookie_guide.png"
+)
 
 # Security notice text for Moodle session agreement
 MOODLE_SESSION_SECURITY_NOTICE = (
@@ -795,7 +797,9 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                             raise
             else:
                 try:
-                    await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+                    await query.edit_message_text(
+                        text, reply_markup=keyboard, parse_mode="Markdown"
+                    )
                 except BadRequest as e:
                     if "Message is not modified" not in str(e):
                         raise
@@ -951,6 +955,17 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 elif sub_action == "menu":
                     # Back to grades menu
                     await show_grades_menu(db, user.id, query, context, page=0)
+                elif sub_action == "archive":
+                    from filoutil.commands.moodle.grades import show_archived_courses_menu
+
+                    if len(data) >= 5 and data[3] == "page":
+                        try:
+                            page = int(data[4])
+                            await show_archived_courses_menu(db, user.id, query, context, page=page)
+                        except (ValueError, IndexError):
+                            await query.answer("❌ Invalid page number.", show_alert=True)
+                    else:
+                        await show_archived_courses_menu(db, user.id, query, context, page=0)
 
     elif action == "sync_courses":
         # Handle manual course sync
@@ -1016,6 +1031,7 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             skipped_count = 0
             total_grades_changed = 0
             total_grades_unchanged = 0
+            total_courses_archived = 0
 
             for session in active_sessions:
                 # Skip if this user was already processed (multiple sessions for same user)
@@ -1029,6 +1045,7 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     processed_count += 1
                     total_grades_changed += stats.get("grades_changed", 0)
                     total_grades_unchanged += stats.get("grades_unchanged", 0)
+                    total_courses_archived += stats.get("courses_archived", 0)
                 except Exception as e:
                     logger.error(
                         f"Error syncing courses for session {session.id}: {e}", exc_info=True
@@ -1046,6 +1063,8 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 text += f"\n*Grades:*\n"
                 text += f"Changed: {total_grades_changed}\n"
                 text += f"Unchanged: {total_grades_unchanged}\n"
+                text += f"\n*Courses:*\n"
+                text += f"Archived: {total_courses_archived}\n"
                 text += f"\nYour courses and grades have been synced."
             else:
                 text = (
@@ -1058,6 +1077,8 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 text += f"\n*Grades:*\n"
                 text += f"Changed: {total_grades_changed}\n"
                 text += f"Unchanged: {total_grades_unchanged}\n"
+                text += f"\n*Courses:*\n"
+                text += f"Archived: {total_courses_archived}\n"
                 text += f"\nCheck logs for details."
 
             keyboard = InlineKeyboardMarkup(

@@ -286,6 +286,18 @@ def run_migrations():
                 )
             logger.info("Migration completed: recreated 'moodle_request_logs' table.")
 
+    if "moodle_courses" in inspector.get_table_names():
+        columns = [col["name"] for col in inspector.get_columns("moodle_courses")]
+        if "archived" not in columns:
+            logger.info("Adding missing column 'archived' to moodle_courses table...")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE moodle_courses ADD COLUMN archived BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                )
+            logger.info("Migration completed: added 'archived' column to moodle_courses.")
+
 
 def init_db():
     retries = 5

@@ -1,14 +1,22 @@
 """Database functions for Moodle courses and grades."""
 
+from collections.abc import Iterable
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from filoutil.db.models import MoodleCourse, MoodleGrade
 
 
-def get_user_courses(db: Session, user_id: int) -> list[MoodleCourse]:
-    """Get all courses for a user."""
-    return db.execute(select(MoodleCourse).where(MoodleCourse.user_id == user_id)).scalars().all()
+def get_user_courses(
+    db: Session, user_id: int, archived: bool | None = False
+) -> list[MoodleCourse]:
+    """Get user courses filtered by archive state."""
+    stmt = select(MoodleCourse).where(MoodleCourse.user_id == user_id)
+    if archived is not None:
+        stmt = stmt.where(MoodleCourse.archived == archived)
+    stmt = stmt.order_by(MoodleCourse.course_name.asc())
+    return db.execute(stmt).scalars().all()
 
 
 def get_course_by_moodle_id(db: Session, user_id: int, course_id: int) -> MoodleCourse | None:
@@ -42,6 +50,7 @@ def upsert_course(db: Session, user_id: int, course_data: dict) -> MoodleCourse:
         # Update existing course
         existing.course_name = course_data.get("fullname", existing.course_name)
         existing.shortname = course_data.get("shortname", existing.shortname)
+        existing.archived = False
         db.commit()
         db.refresh(existing)
         return existing
@@ -52,11 +61,34 @@ def upsert_course(db: Session, user_id: int, course_data: dict) -> MoodleCourse:
             course_id=course_id,
             course_name=course_data.get("fullname", ""),
             shortname=course_data.get("shortname"),
+            archived=False,
         )
         db.add(course)
         db.commit()
         db.refresh(course)
         return course
+
+
+def archive_missing_courses(
+    db: Session, user_id: int, active_course_ids: Iterable[int]
+) -> list[MoodleCourse]:
+    """Archive user courses that were not present in the latest Moodle sync."""
+    active_ids = {course_id for course_id in active_course_ids if course_id is not None}
+    courses = get_user_courses(db, user_id, archived=None)
+    archived_courses = []
+
+    for course in courses:
+        should_archive = course.course_id not in active_ids
+        if should_archive and not course.archived:
+            course.archived = True
+            archived_courses.append(course)
+
+    if archived_courses:
+        db.commit()
+        for course in archived_courses:
+            db.refresh(course)
+
+    return archived_courses
 
 
 def get_course_grades(db: Session, user_id: int, course_id: int) -> list[MoodleGrade]:

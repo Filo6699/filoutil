@@ -250,6 +250,7 @@ class MoodleCourse(Base):
     course_id: Mapped[int] = mapped_column(Integer, index=True)  # Moodle's course ID
     course_name: Mapped[str] = mapped_column(String)
     shortname: Mapped[str] = mapped_column(String, nullable=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

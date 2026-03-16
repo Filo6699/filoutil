@@ -19,6 +19,7 @@ from telegram.ext import Application
 
 from filoutil.db.models import MoodleCourse, MoodleGrade, SessionRefresh, User
 from filoutil.db.moodle_courses import (
+    archive_missing_courses,
     get_course_by_moodle_id,
     get_course_grades,
     get_grade_by_item_id,
@@ -427,7 +428,7 @@ async def fetch_course_grades(
 
 def sync_courses_for_user(
     db: Session, user_id: int, courses_data: list[dict[str, Any]]
-) -> list[MoodleCourse]:
+) -> tuple[list[MoodleCourse], int]:
     """
     Sync courses to database for a user.
 
@@ -437,16 +438,19 @@ def sync_courses_for_user(
         courses_data: List of course data from Moodle API
 
     Returns:
-        List of MoodleCourse objects
+        Tuple of synced courses and archived courses count
     """
     synced_courses = []
+    synced_course_ids = []
     for course_data in courses_data:
         try:
             course = upsert_course(db, user_id, course_data)
             synced_courses.append(course)
+            synced_course_ids.append(course.course_id)
         except Exception as e:
             logger.error(f"Failed to sync course {course_data.get('id')} for user {user_id}: {e}")
-    return synced_courses
+    archived_courses = archive_missing_courses(db, user_id, synced_course_ids)
+    return synced_courses, len(archived_courses)
 
 
 def sync_grades_for_course(
@@ -729,7 +733,7 @@ async def process_courses_for_user(
         session_refresh: SessionRefresh object
 
     Returns:
-        Dictionary with 'grades_changed' and 'grades_unchanged' counts
+        Dictionary with sync statistics for grades and archived courses
     """
     try:
         moodle_user_id = session_refresh.moodle_user_id
@@ -760,7 +764,7 @@ async def process_courses_for_user(
                 logger.warning(
                     f"Could not determine Moodle user ID for user {user_id}: {error_msg}"
                 )
-                return {"grades_changed": 0, "grades_unchanged": 0}
+                return {"grades_changed": 0, "grades_unchanged": 0, "courses_archived": 0}
 
         # Fetch courses from Moodle
         success, courses_data, error_msg = await fetch_user_courses(
@@ -772,21 +776,27 @@ async def process_courses_for_user(
 
         if not success:
             logger.warning(f"Failed to fetch courses for user {user_id}: {error_msg}")
-            return {"grades_changed": 0, "grades_unchanged": 0}
-
-        if not courses_data:
-            logger.info(f"No courses found for user {user_id}")
-            return {"grades_changed": 0, "grades_unchanged": 0}
+            return {"grades_changed": 0, "grades_unchanged": 0, "courses_archived": 0}
 
         # Sync courses to database
         with SessionLocal() as db:
-            synced_courses = sync_courses_for_user(db, user_id, courses_data)
+            synced_courses, archived_courses = sync_courses_for_user(
+                db, user_id, courses_data or []
+            )
 
             # Get user for Telegram ID
             user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
             if not user:
                 logger.warning(f"User {user_id} not found")
-                return {"grades_changed": 0, "grades_unchanged": 0}
+                return {"grades_changed": 0, "grades_unchanged": 0, "courses_archived": 0}
+
+            if not courses_data:
+                logger.info(f"No courses found for user {user_id}")
+                return {
+                    "grades_changed": 0,
+                    "grades_unchanged": 0,
+                    "courses_archived": archived_courses,
+                }
 
             # Collect all grade changes across all courses
             all_grade_changes = []
@@ -845,8 +855,12 @@ async def process_courses_for_user(
             # Return statistics
             grades_changed = len(all_grade_changes)
             grades_unchanged = total_grades_checked - grades_changed
-            return {"grades_changed": grades_changed, "grades_unchanged": grades_unchanged}
+            return {
+                "grades_changed": grades_changed,
+                "grades_unchanged": grades_unchanged,
+                "courses_archived": archived_courses,
+            }
 
     except Exception as e:
         logger.error(f"Error processing courses for user {user_id}: {e}", exc_info=True)
-        return {"grades_changed": 0, "grades_unchanged": 0}
+        return {"grades_changed": 0, "grades_unchanged": 0, "courses_archived": 0}

@@ -53,6 +53,7 @@ def get_grades_menu_keyboard(
     keyboard.append(
         [InlineKeyboardButton("📊 Sync Courses & Grades", callback_data="moodle:sync_courses")]
     )
+    keyboard.append([InlineKeyboardButton("🗃 Archive", callback_data="moodle:grades:archive")])
 
     # Pagination buttons
     nav_buttons = []
@@ -78,6 +79,7 @@ async def show_grades_menu(
 ) -> None:
     """Show the grades menu with list of courses."""
     courses = get_user_courses(db, user_id)
+    archived_courses = get_user_courses(db, user_id, archived=True)
 
     if not courses:
         text = (
@@ -85,16 +87,17 @@ async def show_grades_menu(
             "You don't have any courses synced yet.\n\n"
             'Use "📊 Sync Courses & Grades" to sync your courses first.'
         )
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "📊 Sync Courses & Grades", callback_data="moodle:sync_courses"
-                    )
-                ],
-                [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")],
-            ]
+        keyboard_rows = [
+            [InlineKeyboardButton("📊 Sync Courses & Grades", callback_data="moodle:sync_courses")]
+        ]
+        if archived_courses:
+            keyboard_rows.append(
+                [InlineKeyboardButton("🗃 Archive", callback_data="moodle:grades:archive")]
+            )
+        keyboard_rows.append(
+            [InlineKeyboardButton("⬅️ Back to Moodle Menu", callback_data="moodle:menu")]
         )
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
     else:
         per_page = 8
         total_pages = (len(courses) + per_page - 1) // per_page
@@ -293,6 +296,8 @@ async def show_gradebook(
             pass
         return
 
+    back_callback = "moodle:grades:archive" if course.archived else "moodle:grades"
+
     # Get grades for this course
     grades = get_course_grades(db, user_id, course_id)
 
@@ -319,8 +324,79 @@ async def show_gradebook(
         text = format_gradebook(course.course_name, sorted_grades)
 
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⬅️ Back to Grades", callback_data="moodle:grades")]]
+        [[InlineKeyboardButton("⬅️ Back to Grades", callback_data=back_callback)]]
     )
+
+    try:
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
+
+
+def get_archived_courses_keyboard(
+    courses: list, page: int = 0, per_page: int = 8
+) -> InlineKeyboardMarkup:
+    """Generate keyboard for archived courses view."""
+    keyboard = []
+
+    total_pages = (len(courses) + per_page - 1) // per_page if courses else 1
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    page_courses = courses[start_idx:end_idx]
+
+    for i in range(0, len(page_courses), 2):
+        row = []
+        for j in range(2):
+            if i + j < len(page_courses):
+                course = page_courses[i + j]
+                course_name = html.unescape(course.course_name)
+                if len(course_name) > 30:
+                    course_name = course_name[:27] + "..."
+                row.append(
+                    InlineKeyboardButton(
+                        course_name, callback_data=f"moodle:grades:course:{course.course_id}"
+                    )
+                )
+        keyboard.append(row)
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                "⬅️ Previous", callback_data=f"moodle:grades:archive:page:{page - 1}"
+            )
+        )
+    if page < total_pages - 1:
+        nav_buttons.append(
+            InlineKeyboardButton("Next ➡️", callback_data=f"moodle:grades:archive:page:{page + 1}")
+        )
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Grades", callback_data="moodle:grades")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def show_archived_courses_menu(
+    db, user_id: int, query, context: ContextTypes.DEFAULT_TYPE, page: int = 0
+) -> None:
+    """Show archived courses in a separate menu."""
+    courses = get_user_courses(db, user_id, archived=True)
+
+    if not courses:
+        text = "🗃 *Archived Courses*\n\nArchive is empty."
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Back to Grades", callback_data="moodle:grades")]]
+        )
+    else:
+        per_page = 8
+        total_pages = (len(courses) + per_page - 1) // per_page
+        text = f"🗃 *Archived Courses*\n\n*Total Courses:* {len(courses)}\n\n"
+        text += "Select a course to view saved grades."
+        if total_pages > 1:
+            text += f"\n\n*Page {page + 1} of {total_pages}*"
+        keyboard = get_archived_courses_keyboard(courses, page=page, per_page=per_page)
 
     try:
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
