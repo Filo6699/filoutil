@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY requirements-mcp.txt .
+RUN pip install --no-cache-dir -r requirements-mcp.txt
+
+COPY . .
+
+CMD ["python", "run_mcp_server.py"]

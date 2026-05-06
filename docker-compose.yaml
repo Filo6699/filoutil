@@ -7,6 +7,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: filoutil
+    ports:
+      - "5001:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -15,9 +17,32 @@ services:
     build: .
     restart: always
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/filoutil
     depends_on:
       - db
+    volumes:
+      - .:/app
+
+  mcp:
+    container_name: filoutil-mcp
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    restart: always
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/filoutil
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8765
+    depends_on:
+      - db
+    ports:
+      - "8765:8765"
     volumes:
       - .:/app
 
