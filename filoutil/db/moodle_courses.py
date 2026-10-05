@@ -145,8 +145,10 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
         existing.item_name = grade_data.get("itemname", existing.item_name)
         existing.item_type = grade_data.get("itemtype", existing.item_type)
         existing.item_module = grade_data.get("itemmodule", existing.item_module)
-        existing.grade_raw = grade_raw if grade_raw is not None else existing.grade_raw
-        existing.grade_formatted = grade_formatted or existing.grade_formatted
+        if "graderaw" in grade_data:
+            existing.grade_raw = grade_raw
+        if "gradeformatted" in grade_data:
+            existing.grade_formatted = grade_formatted
         existing.grade_max = grade_data.get("grademax", existing.grade_max)
         existing.grade_min = grade_data.get("grademin", existing.grade_min)
         existing.grade_date_submitted = grade_data.get(
@@ -154,6 +156,10 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
         )
         existing.grade_date_graded = grade_data.get("gradedategraded", existing.grade_date_graded)
         existing.feedback = grade_data.get("feedback", existing.feedback)
+        existing.course_module_id = grade_data.get("coursemoduleid", existing.course_module_id)
+        existing.submission_details = grade_data.get(
+            "submission_details", existing.submission_details
+        )
         existing.last_checked_at = datetime.utcnow()
         db.commit()
         db.refresh(existing)
@@ -173,6 +179,8 @@ def upsert_grade(db: Session, user_id: int, course_id: int, grade_data: dict) ->
             grade_date_submitted=grade_data.get("gradedatesubmitted"),
             grade_date_graded=grade_data.get("gradedategraded"),
             feedback=grade_data.get("feedback"),
+            course_module_id=grade_data.get("coursemoduleid"),
+            submission_details=grade_data.get("submission_details"),
             last_checked_at=datetime.utcnow(),
         )
         db.add(grade)

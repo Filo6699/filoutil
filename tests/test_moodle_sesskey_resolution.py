@@ -1,6 +1,7 @@
 import asyncio
 
 import httpx
+import pytest
 
 from filoutil.session_refresh import oidc_restore
 
@@ -32,12 +33,13 @@ class FakeAsyncClient:
 
 
 def test_extract_sesskey_from_m_cfg():
-    html = "<script>M.cfg = {\"sesskey\":\"AbC123xYz0\"};</script>"
+    html = '<script>M.cfg = {"sesskey":"AbC123xYz0"};</script>'
     assert oidc_restore._extract_sesskey(html) == "AbC123xYz0"
 
 
-def test_extract_sesskey_from_logout_url():
-    html = '<a href="https://example.test/login/logout.php?sesskey=KLMN456789">Logout</a>'
+@pytest.mark.parametrize("logout_path", ["logout.php?", r"logout\.php\?"])
+def test_extract_sesskey_from_logout_url(logout_path):
+    html = f'<a href="https://example.test/login/{logout_path}sesskey=KLMN456789">Logout</a>'
     assert oidc_restore._extract_sesskey(html) == "KLMN456789"
 
 

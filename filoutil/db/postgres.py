@@ -298,6 +298,14 @@ def run_migrations():
                 )
             logger.info("Migration completed: added 'archived' column to moodle_courses.")
 
+    if "moodle_grades" in inspector.get_table_names():
+        columns = {col["name"] for col in inspector.get_columns("moodle_grades")}
+        for name, sql_type in (("course_module_id", "INTEGER"), ("submission_details", "JSON")):
+            if name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE moodle_grades ADD COLUMN {name} {sql_type}"))
+                logger.info("Added %s to moodle_grades", name)
+
 
 def init_db():
     retries = 5

@@ -949,9 +949,29 @@ async def moodle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     if len(data) >= 4:
                         try:
                             course_id = int(data[3])
-                            await show_gradebook(db, user.id, course_id, query, context)
+                            page = int(data[4]) if len(data) > 4 else 0
+                            await show_gradebook(db, user.id, course_id, query, context, page=page)
                         except (ValueError, IndexError):
                             await query.answer("❌ Invalid course ID.", show_alert=True)
+                elif sub_action == "item" and len(data) >= 5:
+                    from filoutil.commands.moodle.grades import show_assignment_details
+
+                    try:
+                        course_id, grade_item_id = int(data[3]), int(data[4])
+                        page = int(data[5]) if len(data) > 5 else 0
+                        gradebook_page = int(data[6]) if len(data) > 6 else 0
+                        await show_assignment_details(
+                            db,
+                            user.id,
+                            course_id,
+                            grade_item_id,
+                            query,
+                            context,
+                            page=page,
+                            gradebook_page=gradebook_page,
+                        )
+                    except (ValueError, IndexError):
+                        await query.answer("❌ Invalid assignment ID.", show_alert=True)
                 elif sub_action == "menu":
                     # Back to grades menu
                     await show_grades_menu(db, user.id, query, context, page=0)

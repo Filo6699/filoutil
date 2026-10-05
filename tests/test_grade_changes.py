@@ -1,6 +1,6 @@
 """Tests for grade change detection logic."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -42,7 +42,7 @@ class TestDetectGradeChanges:
         other_changes = [c for c in changes if not is_register_total(c["grade_data"]["itemname"])]
         assert len(other_changes) == 4
 
-    def test_register_total_shown_when_final_available(self):
+    def test_register_total_ignored_when_final_available(self):
         new_grades = [
             {"id": 1, "itemname": "Register Midterm", "graderaw": 90.0, "gradeformatted": "90.00"},
             {"id": 2, "itemname": "Register Endterm", "graderaw": 89.0, "gradeformatted": "89.00"},
@@ -65,8 +65,8 @@ class TestDetectGradeChanges:
             c for c in changes if is_register_total(c["grade_data"]["itemname"])
         ]
         assert (
-            len(register_total_changes) == 1
-        ), "Register Total 0.00 should be shown when Final is available"
+            len(register_total_changes) == 0
+        ), "Register Total duplicates Course Total even when Final is available"
 
     def test_course_total_ignored_always(self):
         new_grades = [
@@ -84,7 +84,7 @@ class TestDetectGradeChanges:
         ]
         assert len(course_total_changes) == 0, "Course Total 0.00 should always be ignored"
 
-    def test_non_zero_register_total_always_shown(self):
+    def test_non_zero_register_total_ignored_to_avoid_duplicate_totals(self):
         new_grades = [
             {"id": 1, "itemname": "Register Final", "graderaw": None, "gradeformatted": "-"},
             {
@@ -103,7 +103,7 @@ class TestDetectGradeChanges:
         register_total_changes = [
             c for c in changes if is_register_total(c["grade_data"]["itemname"])
         ]
-        assert len(register_total_changes) == 1, "Non-zero Register Total should always be shown"
+        assert len(register_total_changes) == 0, "Register Total duplicates Course Total"
 
 
 if __name__ == "__main__":

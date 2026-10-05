@@ -3,12 +3,14 @@
 This module handles fetching courses and grades from Moodle and detecting changes.
 """
 
+import asyncio
 import html
 import logging
 import re
 import time
 from datetime import datetime
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -27,9 +29,11 @@ from filoutil.db.moodle_courses import (
     upsert_grade,
 )
 from filoutil.db.postgres import SessionLocal
+from filoutil.moodle_cabinet.assignment import fetch_assignment_details, readable_text
 from filoutil.moodle_cabinet.notifications_manager import fetch_moodle_user_id
 from filoutil.moodle_cabinet.request_logger import log_moodle_request
 from filoutil.utils.http import create_async_client
+from filoutil.utils.text import split_message
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +286,7 @@ async def fetch_course_grades(
 
                         # Extract item module from link if available
                         item_module = None
+                        course_module_id = None
                         item_link = row_th.find("a", class_="gradeitemheader")
                         if item_link and item_link.get("href"):
                             href = item_link.get("href")
@@ -289,6 +294,9 @@ async def fetch_course_grades(
                             mod_match = re.search(r"/mod/(\w+)/", href)
                             if mod_match:
                                 item_module = mod_match.group(1)
+                                module_ids = parse_qs(urlparse(href).query).get("id", [])
+                                if module_ids and module_ids[0].isdigit():
+                                    course_module_id = int(module_ids[0])
 
                         # Extract grade from grade column
                         grade_cell = row.find("td", class_=re.compile(r"column-grade\b"))
@@ -327,17 +335,14 @@ async def fetch_course_grades(
 
                         # Extract feedback
                         feedback_cell = row.find("td", class_=re.compile(r"column-feedback\b"))
-                        feedback = None
-                        if feedback_cell:
-                            feedback_text = feedback_cell.get_text(strip=True)
-                            if feedback_text and feedback_text != "&nbsp;" and feedback_text:
-                                feedback = feedback_text
+                        feedback = readable_text(feedback_cell) or None
 
                         grade_item = {
                             "id": grade_item_id,
                             "itemname": item_name,
                             "itemtype": item_type,
                             "itemmodule": item_module,
+                            "coursemoduleid": course_module_id,
                             "graderaw": grade_raw,
                             "gradeformatted": grade_formatted,
                             "grademin": grade_min,
@@ -349,6 +354,9 @@ async def fetch_course_grades(
                             "gradedategraded": None,
                         }
 
+                        if feedback_cell is None:
+                            # A hidden column is not evidence that feedback was removed.
+                            grade_item.pop("feedback", None)
                         grade_items.append(grade_item)
                         processed_count += 1
 
@@ -389,6 +397,29 @@ async def fetch_course_grades(
 
                         filtered_items.append(item)
 
+                    # Gradebook and assignment summaries may shorten comments. Hidden full
+                    # plugin contents on the assignment page contain the complete feedback.
+                    semaphore = asyncio.Semaphore(4)
+
+                    async def enrich(item):
+                        if item["itemmodule"] != "assign" or not item["coursemoduleid"]:
+                            return
+                        async with semaphore:
+                            ok, details, _ = await fetch_assignment_details(
+                                moodleSession,
+                                item["coursemoduleid"],
+                                session_refresh_id,
+                                client=client,
+                            )
+                        if ok:
+                            item["submission_details"] = details
+                            item["feedback"] = details.get("feedback")
+                        else:
+                            # Retain the last full comment rather than replacing it with
+                            # a truncated gradebook preview or a login/error response.
+                            item.pop("feedback", None)
+
+                    await asyncio.gather(*(enrich(item) for item in filtered_items))
                     success = True
                     return True, filtered_items, None
 
@@ -504,15 +535,6 @@ def detect_grade_changes(
 
     stored_grades_map = {grade.grade_item_id: grade for grade in stored_grades}
 
-    register_final_available = False
-    for grade_data in new_grades:
-        item_name_lower = grade_data.get("itemname", "").lower()
-        if "register final" in item_name_lower:
-            grade_raw = grade_data.get("graderaw")
-            grade_formatted = grade_data.get("gradeformatted")
-            if grade_raw is not None or (grade_formatted and grade_formatted != "-"):
-                register_final_available = True
-
     for grade_data in new_grades:
         grade_item_id = grade_data.get("id")
         if not grade_item_id:
@@ -530,25 +552,25 @@ def detect_grade_changes(
         )
         is_course_total = "course total" in item_name_lower or item_name_lower == "total"
 
-        # Skip register total notifications entirely — course total already covers this
-        if is_register_total:
-            continue
-
-        if is_course_total and new_grade_raw is not None and new_grade_raw == 0.0:
-            continue
-
         stored_grade = stored_grades_map.get(grade_item_id)
+        feedback_changed = "feedback" in grade_data and (
+            (grade_data["feedback"] or "") != (stored_grade.feedback or "" if stored_grade else "")
+        )
+        # Preserve origin's suppression of duplicate totals, while allowing feedback updates.
+        if is_register_total and not feedback_changed:
+            continue
+        if is_course_total and new_grade_raw == 0.0 and not feedback_changed:
+            continue
 
         if not stored_grade:
-            if new_grade_raw is not None or new_grade_formatted:
+            if new_grade_raw is not None or new_grade_formatted or grade_data.get("feedback"):
                 changes.append(
                     {
                         "type": "new",
                         "old_grade": None,
                         "new_grade": (
-                            new_grade_formatted or str(new_grade_raw)
-                            if new_grade_raw is not None
-                            else "N/A"
+                            new_grade_formatted
+                            or (str(new_grade_raw) if new_grade_raw is not None else "N/A")
                         ),
                         "grade_data": grade_data,
                     }
@@ -567,21 +589,24 @@ def detect_grade_changes(
             elif new_grade_raw is None and old_grade_raw is not None:
                 grade_changed = True
 
+            if new_grade_raw is None and old_grade_raw is None:
+                grade_changed = (new_grade_formatted or None) != (old_grade_formatted or None)
             date_changed = new_date_graded and new_date_graded != old_date_graded
+            if "feedback" not in grade_data:
+                grade_data["feedback"] = stored_grade.feedback
 
-            if grade_changed or date_changed:
+            if grade_changed or date_changed or feedback_changed:
                 changes.append(
                     {
                         "type": "updated",
+                        "feedback_changed": feedback_changed,
                         "old_grade": (
-                            old_grade_formatted or str(old_grade_raw)
-                            if old_grade_raw is not None
-                            else "N/A"
+                            old_grade_formatted
+                            or (str(old_grade_raw) if old_grade_raw is not None else "N/A")
                         ),
                         "new_grade": (
-                            new_grade_formatted or str(new_grade_raw)
-                            if new_grade_raw is not None
-                            else "N/A"
+                            new_grade_formatted
+                            or (str(new_grade_raw) if new_grade_raw is not None else "N/A")
                         ),
                         "grade_data": grade_data,
                     }
@@ -607,117 +632,107 @@ async def send_batch_grade_notification(
         True if sent successfully, False otherwise
     """
     try:
-
-        def escape_md(text: str) -> str:
-            special_chars = r"_*[]()~`>#+-=|{}.!"
-            return "".join(f"\\{c}" if c in special_chars else c for c in str(text))
-
-        count = len(grade_changes)
-        if count == 0:
+        if not grade_changes:
             return True
+        message = f"📊 Grade Changes ({len(grade_changes)})\n\n"
+        message += "\n\n".join(
+            format_grade_notification(course, change) for course, change in grade_changes
+        )
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📊 View Full Grades", callback_data="moodle:grades")]]
+        )
+        await _send_grade_pages(app, user_telegram_id, message, keyboard)
+        return True
+    except Exception as exc:
+        logger.error(
+            "Failed to send batch grade notification to user %s: %s", user_telegram_id, exc
+        )
+        return False
 
-        if count > 25:
-            message = f"📊 *New Grades \\({count}\\)*\n\n"
-            message += "Too many changes\\. Check your grades in Moodle\\."
-        else:
-            message = f"📊 *New Grades \\({count}\\)*\n\n"
-            for course, grade_change in grade_changes:
-                grade_data = grade_change["grade_data"]
-                item_name = html.unescape(grade_data.get("itemname", "Unknown"))
-                new_grade = grade_change.get("new_grade", "N/A")
-                course_name = html.unescape(course.course_name)
-                course_name = course_name[:30] + "..." if len(course_name) > 30 else course_name
-                item_name_short = item_name[:25] + "..." if len(item_name) > 25 else item_name
-                message += f"• {escape_md(course_name)}: {escape_md(item_name_short)} — *{escape_md(new_grade)}*\n"
 
+def format_grade_notification(course: MoodleCourse, grade_change: dict[str, Any]) -> str:
+    """One complete payload shared by individual and batch notifications."""
+    data = grade_change["grade_data"]
+    is_new = grade_change["type"] == "new"
+    lines = [
+        "📊 New Grade" if is_new else "📊 Grade Update",
+        f"Course: {html.unescape(course.course_name)}",
+        f"Assignment: {html.unescape(data.get('itemname', 'Unknown'))}",
+    ]
+    new_grade = grade_change.get("new_grade", "N/A")
+    lines.append(
+        f"Grade: {new_grade}"
+        if is_new
+        else f"Grade: {grade_change.get('old_grade', 'N/A')} → {new_grade}"
+    )
+    if grade_change.get("feedback_changed"):
+        lines.append("Feedback updated")
+    if data.get("gradedategraded"):
+        try:
+            date = datetime.fromtimestamp(data["gradedategraded"]).strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(f"Date graded: {date}")
+        except (ValueError, OSError, TypeError):
+            pass
+    feedback = data.get("feedback")
+    if feedback:
+        lines.append(f"\nFeedback:\n{feedback}")
+    elif grade_change.get("feedback_changed"):
+        lines.append("\nFeedback removed")
+    return "\n".join(lines)
+
+
+async def _send_grade_pages(app, user_telegram_id, message, keyboard):
+    pages = split_message(message)
+    for index, page in enumerate(pages):
+        if index:
+            await asyncio.sleep(1)  # Keep long feedback below Telegram's per-chat rate limit.
         await app.bot.send_message(
             chat_id=user_telegram_id,
-            text=message,
-            parse_mode="MarkdownV2",
+            text=html.escape(page),
+            parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=keyboard if index == len(pages) - 1 else None,
         )
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send batch grade notification to user {user_telegram_id}: {e}")
-        return False
 
 
 async def send_grade_notification(
     app: Application, user_telegram_id: int, course: MoodleCourse, grade_change: dict[str, Any]
 ) -> bool:
-    """
-    Send a grade change notification to the user via Telegram.
-
-    Args:
-        app: Telegram application
-        user_telegram_id: User's Telegram ID
-        course: MoodleCourse object
-        grade_change: Grade change dictionary with 'type', 'old_grade', 'new_grade', 'grade_data'
-
-    Returns:
-        True if sent successfully, False otherwise
-    """
+    """Send complete feedback, splitting long comments at Telegram's message limit."""
     try:
-        grade_data = grade_change["grade_data"]
-        item_name = html.unescape(grade_data.get("itemname", "Unknown"))
-        course_name = html.unescape(course.course_name)
-        change_type = grade_change["type"]
-        old_grade = grade_change.get("old_grade", "N/A")
-        new_grade = grade_change.get("new_grade", "N/A")
-        grade_date_graded = grade_data.get("gradedategraded")
-
-        # Format date graded
-        date_str = None
-        if grade_date_graded is not None and grade_date_graded > 0:
-            try:
-                date_obj = datetime.fromtimestamp(grade_date_graded)
-                date_str = date_obj.strftime("%Y-%m-%d %H:%M:%S")
-            except (ValueError, OSError, TypeError):
-                pass
-
-        # Build message
-        if change_type == "new":
-            message = f"📊 *New Grade*\n\n"
-        else:
-            message = f"📊 *Grade Update*\n\n"
-
-        message += f"*Course:* {course_name}\n"
-        message += f"*Assignment:* {item_name}\n"
-
-        if change_type == "new":
-            message += f"*Grade:* {new_grade}\n"
-        else:
-            message += f"*Grade:* {old_grade} → {new_grade}\n"
-
-        # Only include date graded if it's available
-        if date_str:
-            message += f"*Date Graded:* {date_str}\n"
-
-        # Add course URL
-        gradebook_url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course.course_id}"
-        message += f"\n🔗 [View in Moodle]({gradebook_url})"
-
-        keyboard = InlineKeyboardMarkup(
-            [
+        data = grade_change["grade_data"]
+        keyboard_rows = []
+        if data.get("itemmodule") == "assign" and data.get("coursemoduleid"):
+            keyboard_rows.append(
                 [
                     InlineKeyboardButton(
-                        "📊 View Full Grades",
-                        callback_data=f"moodle:grades:course:{course.course_id}",
+                        "📝 Assignment Details",
+                        callback_data=f"moodle:grades:item:{course.course_id}:{data['id']}",
                     )
                 ]
+            )
+        keyboard_rows.append(
+            [
+                InlineKeyboardButton(
+                    "📊 View Full Grades", callback_data=f"moodle:grades:course:{course.course_id}"
+                )
             ]
         )
-
-        await app.bot.send_message(
-            chat_id=user_telegram_id,
-            text=message,
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-            reply_markup=keyboard,
+        keyboard_rows.append(
+            [
+                InlineKeyboardButton(
+                    "🔗 View in Moodle",
+                    url=f"{LMS_BASE_URL}/grade/report/user/index.php?id={course.course_id}",
+                )
+            ]
+        )
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
+        await _send_grade_pages(
+            app, user_telegram_id, format_grade_notification(course, grade_change), keyboard
         )
         return True
-    except Exception as e:
-        logger.error(f"Failed to send grade notification to user {user_telegram_id}: {e}")
+    except Exception as exc:
+        logger.error("Failed to send grade notification to user %s: %s", user_telegram_id, exc)
         return False
 
 

@@ -83,7 +83,7 @@ def _extract_sesskey(html: str) -> str | None:
     patterns = [
         r"M\.cfg\.sesskey[^A-Za-z0-9]*['\"]?([A-Za-z0-9]{6,})",
         r'"sesskey"\s*:\s*"([A-Za-z0-9]{6,})"',
-        r"logout(?:\\\.)?php(?:\\\?)?sesskey=([A-Za-z0-9]{6,})",
+        r"logout(?:\\)?\.php(?:\\)?\?sesskey=([A-Za-z0-9]{6,})",
     ]
     for pattern in patterns:
         match = re.search(pattern, html, re.IGNORECASE)

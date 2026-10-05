@@ -285,6 +285,8 @@ class MoodleGrade(Base):
     grade_date_submitted: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
     grade_date_graded: Mapped[int] = mapped_column(BigInteger, nullable=True)  # Unix timestamp
     feedback: Mapped[str] = mapped_column(String, nullable=True)
+    course_module_id: Mapped[int] = mapped_column(Integer, nullable=True)
+    submission_details: Mapped[dict] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

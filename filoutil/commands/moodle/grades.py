@@ -9,8 +9,16 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
-from filoutil.db.moodle_courses import get_course_grades, get_user_courses
+from filoutil.db.moodle_courses import (
+    get_course_by_moodle_id,
+    get_course_grades,
+    get_grade_by_item_id,
+    get_user_courses,
+)
 from filoutil.db.postgres import SessionLocal
+from filoutil.db.session_refresh import get_active_sessions_for_user
+from filoutil.moodle_cabinet.assignment import LMS_BASE_URL, fetch_assignment_details
+from filoutil.utils.text import split_message
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +197,10 @@ def format_gradebook(course_name: str, grades: list) -> str:
         elif grade.grade_raw is not None:
             grade_display = f"{grade.grade_raw:.2f}".rstrip("0").rstrip(".")
         else:
-            # Skip empty grades
-            continue
+            if grade.item_module == "assign" or grade.feedback:
+                grade_display = "—"
+            else:
+                continue
 
         # Categorize the grade (unescape HTML entities in item name)
         item_name_unescaped = html.unescape(grade.item_name)
@@ -215,9 +225,9 @@ def format_gradebook(course_name: str, grades: list) -> str:
         elif "attendance" in item_name_lower:
             attendance = (item_name_unescaped, grade_display)
         elif grade.item_module == "assign" or "assignment" in item_name_lower:
-            assignments.append((item_name_unescaped, grade_display))
+            assignments.append((item_name_unescaped, grade_display, grade.feedback))
         else:
-            other_grades.append((item_name_unescaped, grade_display))
+            other_grades.append((item_name_unescaped, grade_display, grade.feedback))
 
     # Build the message (unescape HTML entities in course name)
     text = f"*{_escape_moodle_markdown(course_name)}*{scholarship_emoji}\n\n"
@@ -260,29 +270,37 @@ def format_gradebook(course_name: str, grades: list) -> str:
     if assignments:
         text += "\n"
         # Add assignments
-        for item_name, grade_display in assignments:
+        for item_name, grade_display, feedback in assignments:
             text += (
                 f"{_escape_moodle_markdown(item_name)} → {_escape_moodle_markdown(grade_display)}\n"
             )
+            if feedback:
+                preview = " ".join(feedback.split())
+                if len(preview) > 120:
+                    preview = preview[:117] + "…"
+                text += f"  💬 {_escape_moodle_markdown(preview)}\n"
 
     # Add other grades if any
     if other_grades:
         if assignments:
             text += "\n"
-        for item_name, grade_display in other_grades:
+        for item_name, grade_display, feedback in other_grades:
             text += (
                 f"{_escape_moodle_markdown(item_name)} → {_escape_moodle_markdown(grade_display)}\n"
             )
+            if feedback:
+                preview = " ".join(feedback.split())
+                if len(preview) > 120:
+                    preview = preview[:117] + "…"
+                text += f"  💬 {_escape_moodle_markdown(preview)}\n"
 
     return text
 
 
 async def show_gradebook(
-    db, user_id: int, course_id: int, query, context: ContextTypes.DEFAULT_TYPE
+    db, user_id: int, course_id: int, query, context: ContextTypes.DEFAULT_TYPE, page: int = 0
 ) -> None:
     """Show gradebook for a specific course."""
-    from filoutil.db.moodle_courses import get_course_by_moodle_id
-
     course = get_course_by_moodle_id(db, user_id, course_id)
 
     if not course:
@@ -301,6 +319,8 @@ async def show_gradebook(
     # Get grades for this course
     grades = get_course_grades(db, user_id, course_id)
 
+    item_buttons = []
+    nav_buttons = []
     if not grades:
         text = (
             f"📊 *{_escape_moodle_markdown(course.course_name)}*\n\n"
@@ -321,10 +341,44 @@ async def show_gradebook(
                 return (2, item_name_lower)
 
         sorted_grades = sorted(grades, key=sort_key)
-        text = format_gradebook(course.course_name, sorted_grades)
+        grade_pages = [[]]
+        for grade in sorted_grades:
+            candidate = grade_pages[-1] + [grade]
+            candidate_text = format_gradebook(course.course_name, candidate)
+            if grade_pages[-1] and (
+                len(candidate) > 8 or len(candidate_text.encode("utf-16-le")) // 2 > 3500
+            ):
+                grade_pages.append([grade])
+            else:
+                grade_pages[-1] = candidate
+        total_pages = len(grade_pages)
+        page = max(0, min(page, total_pages - 1))
+        page_grades = grade_pages[page]
+        text = format_gradebook(course.course_name, page_grades)
+        for grade in page_grades:
+            if grade.item_module == "assign" or grade.feedback:
+                item_buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "📝 " + html.unescape(grade.item_name)[:50],
+                            callback_data=f"moodle:grades:item:{course_id}:{grade.grade_item_id}:0:{page}",
+                        )
+                    ]
+                )
+        if total_pages > 1:
+            text += f"\nPage {page + 1} of {total_pages}"
+            for label, target in (("⬅️ Previous", page - 1), ("Next ➡️", page + 1)):
+                if 0 <= target < total_pages:
+                    nav_buttons.append(
+                        InlineKeyboardButton(
+                            label, callback_data=f"moodle:grades:course:{course_id}:{target}"
+                        )
+                    )
 
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("⬅️ Back to Grades", callback_data=back_callback)]]
+        item_buttons
+        + ([nav_buttons] if nav_buttons else [])
+        + [[InlineKeyboardButton("⬅️ Back to Grades", callback_data=back_callback)]]
     )
 
     try:
@@ -402,4 +456,99 @@ async def show_archived_courses_menu(
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
     except BadRequest as e:
         if "Message is not modified" not in str(e):
+            raise
+
+
+async def show_assignment_details(
+    db,
+    user_id: int,
+    course_id: int,
+    grade_item_id: int,
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    page: int = 0,
+    gradebook_page: int = 0,
+) -> None:
+    """Show full feedback and the current submission summary for the requesting user."""
+    course = get_course_by_moodle_id(db, user_id, course_id)
+    grade = get_grade_by_item_id(db, user_id, course_id, grade_item_id)
+    back = f"moodle:grades:course:{course_id}:{gradebook_page}"
+    if not course or not grade:
+        await query.edit_message_text(
+            "❌ Assignment not found.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Back to Grades", callback_data="moodle:grades")]]
+            ),
+        )
+        return
+    details = grade.submission_details or {}
+    feedback = grade.feedback
+    cached = True
+    if grade.item_module == "assign" and grade.course_module_id and not course.archived:
+        for session in get_active_sessions_for_user(db, user_id):
+            ok, latest, _ = await fetch_assignment_details(
+                session.moodleSession, grade.course_module_id, session.id
+            )
+            if ok:
+                details = latest
+                feedback = latest.get("feedback", feedback)
+                cached = False
+                break
+    lines = [
+        html.unescape(course.course_name),
+        html.unescape(grade.item_name),
+        f"Grade: {grade.grade_formatted or (grade.grade_raw if grade.grade_raw is not None else '—')}",
+    ]
+    if grade.item_module == "assign":
+        if cached:
+            lines.append("Saved submission details; live Moodle data unavailable.")
+        lines.append(f"Submission: {details.get('status') or 'Unknown'}")
+        for key, label in (
+            ("due_date", "Due date"),
+            ("extension_due_date", "Extension due date"),
+            ("last_modified", "Last modified"),
+        ):
+            if details.get(key):
+                lines.append(f"{label}: {details[key]}")
+        lines.append(f"Timing: {details.get('timing_text') or 'Unavailable'}")
+        for key, label in (("files", "Submitted files"), ("feedback_files", "Feedback files")):
+            lines.append(f"\n{label}:")
+            lines.extend(f"• {name}" for name in details.get(key, []))
+            if not details.get(key):
+                lines.append("None" if details else "Unknown")
+    lines.append(f"\nFeedback:\n{feedback or 'No feedback'}")
+    pages = split_message("\n".join(lines))
+    page = max(0, min(page, len(pages) - 1))
+    nav = []
+    for label, target in (("⬅️ Previous", page - 1), ("Next ➡️", page + 1)):
+        if 0 <= target < len(pages):
+            nav.append(
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"moodle:grades:item:{course_id}:{grade_item_id}:{target}:{gradebook_page}",
+                )
+            )
+    keyboard = [nav] if nav else []
+    if grade.course_module_id and grade.item_module == "assign":
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "🔗 View in Moodle",
+                    url=f"{LMS_BASE_URL}/mod/assign/view.php?id={grade.course_module_id}",
+                )
+            ]
+        )
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Course Grades", callback_data=back)])
+    text = html.escape(pages[page])
+    if len(pages) > 1:
+        text += f"\n\nPage {page + 1} of {len(pages)}"
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            disable_web_page_preview=True,
+        )
+    except BadRequest as exc:
+        if "Message is not modified" not in str(exc):
             raise

@@ -7,6 +7,10 @@ A feature-rich Telegram bot built with **python-telegram-bot** that provides mon
 - **Monitoring System**: Track and monitor various services and endpoints
 - **Moodle Integration**:
   - Course watching and notifications
+  - Complete feedback in grade updates, including feedback edits and removals
+  - Short feedback previews in course grades and assignment detail buttons
+  - Assignment submission timing from Moodle (early/late and duration), with file names only
+  - Long feedback is split across messages; assignment details and course grades are paginated
   - Session management and automatic refresh
   - Quiet hours configuration
 - **Notification Management**: Customizable notification settings with blacklist words
