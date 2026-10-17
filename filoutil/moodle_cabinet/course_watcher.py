@@ -9,6 +9,7 @@ import logging
 import re
 import time
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -568,6 +569,8 @@ def detect_grade_changes(
                     {
                         "type": "new",
                         "old_grade": None,
+                        "old_grade_raw": None,
+                        "new_grade_raw": new_grade_raw,
                         "new_grade": (
                             new_grade_formatted
                             or (str(new_grade_raw) if new_grade_raw is not None else "N/A")
@@ -599,7 +602,10 @@ def detect_grade_changes(
                 changes.append(
                     {
                         "type": "updated",
+                        "grade_changed": grade_changed,
                         "feedback_changed": feedback_changed,
+                        "old_grade_raw": old_grade_raw,
+                        "new_grade_raw": new_grade_raw,
                         "old_grade": (
                             old_grade_formatted
                             or (str(old_grade_raw) if old_grade_raw is not None else "N/A")
@@ -650,34 +656,86 @@ async def send_batch_grade_notification(
         return False
 
 
+def _grade_display(value: Any) -> str:
+    """Normalize Moodle's empty grade placeholders without treating zero as empty."""
+    text = str(value).strip() if value is not None else ""
+    return "No grade" if text.casefold() in {"", "-", "–", "—", "n/a", "no grade"} else text
+
+
+def _grade_number(value: Any) -> Decimal | None:
+    """Only comparable numeric grades can have an increase/decrease indicator."""
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    return number if number.is_finite() else None
+
+
 def format_grade_notification(course: MoodleCourse, grade_change: dict[str, Any]) -> str:
-    """One complete payload shared by individual and batch notifications."""
+    """Compact English payload shared by individual and batch notifications."""
     data = grade_change["grade_data"]
-    is_new = grade_change["type"] == "new"
-    lines = [
-        "📊 New Grade" if is_new else "📊 Grade Update",
-        f"Course: {html.unescape(course.course_name)}",
-        f"Assignment: {html.unescape(data.get('itemname', 'Unknown'))}",
-    ]
-    new_grade = grade_change.get("new_grade", "N/A")
-    lines.append(
-        f"Grade: {new_grade}"
-        if is_new
-        else f"Grade: {grade_change.get('old_grade', 'N/A')} → {new_grade}"
+    item_name = html.unescape(data.get("itemname") or "Unknown")
+    is_attendance = data.get("itemmodule") == "attendance" or bool(
+        re.search(r"\battendance\b", item_name, re.IGNORECASE)
     )
-    if grade_change.get("feedback_changed"):
-        lines.append("Feedback updated")
+    old_grade = _grade_display(grade_change.get("old_grade"))
+    new_grade = _grade_display(grade_change.get("new_grade"))
+    has_old = old_grade != "No grade"
+    has_new = new_grade != "No grade"
+    is_new = has_new and (grade_change["type"] == "new" or not has_old)
+    is_removed = has_old and not has_new
+    grade_changed = grade_change.get("grade_changed", old_grade != new_grade)
+    feedback_changed = grade_change.get("feedback_changed", False)
+    feedback = data.get("feedback")
+    feedback_title = "💬 Feedback Updated" if feedback else "💬 Feedback Removed"
+
+    if is_attendance:
+        title = "📋 Attendance Update"
+    elif is_new:
+        title = "🆕 New Grade"
+    elif is_removed:
+        title = "⚪ Grade Removed"
+    elif (feedback_changed or (grade_change["type"] == "new" and feedback)) and not grade_changed:
+        title = feedback_title
+    else:
+        title = "📊 Grade Update"
+    lines = [title, html.unescape(course.course_name)]
+    if not is_attendance or item_name.strip().casefold() != "attendance":
+        lines.append(item_name)
+
+    if is_new:
+        lines.append(f"Grade: {new_grade}")
+    elif is_removed:
+        lines.append(f"{old_grade} → No grade")
+    elif not grade_changed:
+        suffix = " · unchanged" if has_new else ""
+        lines.append(f"Grade: {new_grade}{suffix}")
+    else:
+        old_number = _grade_number(grade_change.get("old_grade_raw", old_grade))
+        new_number = _grade_number(grade_change.get("new_grade_raw", new_grade))
+        indicator = "⚪"
+        change_text = ""
+        if old_number is not None and new_number is not None:
+            delta = (new_number - old_number).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if delta:
+                indicator = "🟢 ↑" if delta > 0 else "🔴 ↓"
+                precision = ".0f" if delta == delta.to_integral_value() else ".2f"
+                amount = format(abs(delta), precision)
+                sign = "+" if delta > 0 else "−"
+                unit = "point" if abs(delta) == 1 else "points"
+                change_text = f" · {sign}{amount} {unit}"
+        lines.append(f"{indicator} {old_grade} → {new_grade}{change_text}")
+
+    if feedback_changed and title != feedback_title:
+        lines.append(feedback_title)
     if data.get("gradedategraded"):
         try:
             date = datetime.fromtimestamp(data["gradedategraded"]).strftime("%Y-%m-%d %H:%M:%S")
             lines.append(f"Date graded: {date}")
         except (ValueError, OSError, TypeError):
             pass
-    feedback = data.get("feedback")
     if feedback:
         lines.append(f"\nFeedback:\n{feedback}")
-    elif grade_change.get("feedback_changed"):
-        lines.append("\nFeedback removed")
     return "\n".join(lines)
 
 
