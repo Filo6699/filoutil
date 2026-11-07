@@ -81,14 +81,17 @@ def parse_assignment_page(page_html: str) -> dict:
         "due date": "due_date",
         "extension due date": "extension_due_date",
         "last modified": "last_modified",
+        "submission status": "status",
         "срок сдачи": "due_date",
         "последнее изменение": "last_modified",
+        "состояние ответа": "status",
     }
     for row in submission.select("tr"):
-        label, value = row.find("th"), row.find("td")
+        label, value = row.find(["th", "td"]), row.find_all("td")[-1:]
         key = labels.get(readable_text(label).casefold())
-        if key:
-            details[key] = readable_text(value)
+        # "No submissions have been made yet" has no status class, so fall back to the row.
+        if key and value and value[0] is not label and not (key == "status" and details[key]):
+            details[key] = readable_text(value[0]) or None
 
     for scope, prefix, key in (
         (submission, "submission_file", "files"),

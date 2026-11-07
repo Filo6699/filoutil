@@ -507,3 +507,12 @@ def test_grades_saved_with_action_menu_text_do_not_notify(db, stored, new_raw):
         "gradeformatted": f"{new_raw:.2f}" if new_raw is not None else None,
     }
     assert course_watcher.detect_grade_changes(db, 1, 11, [new]) == []
+
+
+def test_status_without_css_class_uses_row_label():
+    details = assignment.parse_assignment_page("""<div class="submissionstatustable"><table>
+      <tr><th class="cell c0">Submission status</th>
+        <td class="cell c1 lastcol">No submissions have been made yet</td></tr>
+      <tr><th class="cell c0">Grading status</th>
+        <td class="submissiongraded cell c1 lastcol">Graded</td></tr></table></div>""")
+    assert details["status"] == "No submissions have been made yet"
