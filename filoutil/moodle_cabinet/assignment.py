@@ -31,6 +31,18 @@ def readable_text(element) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def plugin_contents(scope, plugin: str) -> list:
+    """Prefer hidden full plugin contents to Moodle's shortened summaries.
+
+    Moodle names containers after the plugin component, e.g. full_assignfeedback_comments_7.
+    """
+    for kind in ("full", "summary"):
+        found = scope.select(f'[class*="{kind}_{plugin}_"], [class*="{kind}_assign{plugin}_"]')
+        if found:
+            return found
+    return []
+
+
 def parse_assignment_page(page_html: str) -> dict:
     """Prefer hidden full plugin contents to Moodle's shortened summaries.
 
@@ -84,12 +96,8 @@ def parse_assignment_page(page_html: str) -> dict:
     ):
         if scope is None:
             continue
-        # Full file lists are embedded in hidden HTML when the summary only shows a count.
-        containers = scope.select(f'[class*="full_{prefix}_"]') or scope.select(
-            f'[class*="summary_{prefix}_"]'
-        )
         names = []
-        for container in containers:
+        for container in plugin_contents(scope, prefix):
             for link in container.select('a[href*="pluginfile.php"]'):
                 name = readable_text(link)
                 if name:
@@ -98,9 +106,7 @@ def parse_assignment_page(page_html: str) -> dict:
 
     feedback_scope = soup.select_one(".feedback")
     if feedback_scope:
-        comments = feedback_scope.select(
-            '[class*="full_feedback_comments_"]'
-        ) or feedback_scope.select('[class*="summary_feedback_comments_"]')
+        comments = plugin_contents(feedback_scope, "feedback_comments")
         details["feedback"] = "\n\n".join(filter(None, map(readable_text, comments))) or None
     return details
 

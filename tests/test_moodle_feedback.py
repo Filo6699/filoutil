@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -39,25 +40,25 @@ def assignment_html():
       <tr><th>Extension due date</th><td>Tuesday, 6 October 2026</td></tr>
       <tr><th>Last modified</th><td>Thursday, 8 October 2026</td></tr>
       <tr><th>File submissions</th><td>
-        <div class="plugincontentsummary summary_submission_file_91">2 files</div>
-        <div class="hidefull full_submission_file_91">
+        <div class="plugincontentsummary summary_assignsubmission_file_91">2 files</div>
+        <div class="hidefull full_assignsubmission_file_91">
           <a class="expandsummaryicon">Collapse</a>
           <a href="/pluginfile.php/1/assignsubmission_file/1/report.pdf">report.pdf</a>
           <a href="/pluginfile.php/1/assignsubmission_file/1/code.py">code.py</a>
         </div></td></tr></table></div>
       <div class="feedback"><div class="feedbacktable"><table>
         <tr><th>Feedback comments</th><td>
-          <div class="plugincontentsummary summary_feedback_comments_81">Short...</div>
-          <div class="hidefull full_feedback_comments_81">
+          <div class="plugincontentsummary summary_assignfeedback_comments_81">Short...</div>
+          <div class="hidefull full_assignfeedback_comments_81">
             <a class="expandsummaryicon">Collapse</a>
             <p>Full <b>feedback</b> &amp; details.</p><p>Second paragraph.<br>Last line.</p>
           </div></td></tr>
-        <tr><th>Feedback files</th><td><div class="summary_feedback_file_81">
+        <tr><th>Feedback files</th><td><div class="summary_assignfeedback_file_81">
           <a href="/pluginfile.php/1/assignfeedback_file/1/review.pdf">review.pdf</a>
         </div></td></tr></table></div></div>
-      <div class="submissionhistory"><div class="full_submission_file_70">
+      <div class="submissionhistory"><div class="full_assignsubmission_file_70">
         <a href="/pluginfile.php/1/assignsubmission_file/1/old.pdf">old.pdf</a></div>
-        <div class="full_feedback_comments_70">Old comment</div></div>"""
+        <div class="full_assignfeedback_comments_70">Old comment</div></div>"""
 
 
 def seed_grade(db, feedback="Old feedback", raw=80.0):
@@ -479,3 +480,30 @@ def test_sync_deletes_grade_items_removed_from_gradebook(db):
 
     remaining = db.query(MoodleGrade).order_by(MoodleGrade.grade_item_id).all()
     assert [(g.course_id, g.grade_item_id) for g in remaining] == [(11, 21), (12, 23)]
+
+
+ACTION_MENU = """<div class="action-menu moodle-actionmenu"><a aria-label="Actions">
+  <i class="icon fa fa-ellipsis"></i><span class="visually-hidden">Actions</span></a>
+  <div class="dropdown-menu"><a><span class="menu-action-text">Grade analysis</span></a></div></div>"""
+
+
+@pytest.mark.parametrize("grade,expected", [("94.00", "94.00"), ("-", "-")])
+def test_grade_cell_ignores_action_menu(grade, expected):
+    cell = BeautifulSoup(
+        f'<td class="column-grade"><div class="d-flex"><div>{grade}</div>'
+        f'<div class="ps-1">{ACTION_MENU}</div></div></td>',
+        "html.parser",
+    ).td
+    assert course_watcher.grade_cell_text(cell) == expected
+
+
+@pytest.mark.parametrize("stored,new_raw", [("94.00Actions", 94.0), ("-Actions", None)])
+def test_grades_saved_with_action_menu_text_do_not_notify(db, stored, new_raw):
+    upsert_grade(db, 1, 11, {"id": 21, "itemname": "Assignment 1", "gradeformatted": stored})
+    new = {
+        "id": 21,
+        "itemname": "Assignment 1",
+        "graderaw": new_raw,
+        "gradeformatted": f"{new_raw:.2f}" if new_raw is not None else None,
+    }
+    assert course_watcher.detect_grade_changes(db, 1, 11, [new]) == []

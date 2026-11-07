@@ -168,6 +168,31 @@ async def fetch_user_courses(
         )
 
 
+def grade_cell_text(cell) -> str:
+    """Grade text without the cell's action menu ("Actions", "Grade analysis")."""
+    if cell is None:
+        return "-"
+    copy = BeautifulSoup(str(cell), "html.parser")
+    for menu in copy.select(".action-menu, .dropdown-menu, .visually-hidden, .sr-only"):
+        menu.decompose()
+    text = copy.get_text(strip=True).replace("Grade analysis", "").strip()
+    return text or "-"
+
+
+def _stored_grade_values(grade: MoodleGrade) -> tuple[float | None, str | None]:
+    """Read grades saved while the action menu leaked into the text, e.g. "94.00Actions"."""
+    raw, formatted = grade.grade_raw, grade.grade_formatted
+    if formatted and formatted.endswith("Actions"):
+        formatted = formatted.removesuffix("Actions").strip()
+        formatted = None if formatted in ("", "-") else formatted
+        if raw is None and formatted:
+            try:
+                raw = float(formatted)
+            except ValueError:
+                pass
+    return raw, formatted
+
+
 async def fetch_course_grades(
     moodleSession: str, course_id: int, session_refresh_id: int | None = None
 ) -> tuple[bool, list[dict[str, Any]] | None, str | None]:
@@ -302,10 +327,7 @@ async def fetch_course_grades(
 
                         # Extract grade from grade column
                         grade_cell = row.find("td", class_=re.compile(r"column-grade\b"))
-                        grade_text = grade_cell.get_text(strip=True) if grade_cell else "-"
-                        # Strip "Grade analysis" text if present
-                        if grade_text and "Grade analysis" in grade_text:
-                            grade_text = grade_text.replace("Grade analysis", "").strip()
+                        grade_text = grade_cell_text(grade_cell)
                         grade_raw = None
                         grade_formatted = grade_text if grade_text != "-" else None
                         if grade_formatted:
@@ -588,8 +610,7 @@ def detect_grade_changes(
                     }
                 )
         else:
-            old_grade_raw = stored_grade.grade_raw
-            old_grade_formatted = stored_grade.grade_formatted
+            old_grade_raw, old_grade_formatted = _stored_grade_values(stored_grade)
             old_date_graded = stored_grade.grade_date_graded
 
             grade_changed = False
