@@ -439,3 +439,43 @@ async def test_archived_details_use_saved_data_without_network(db, monkeypatch):
     retrieve.assert_not_awaited()
     text = html.unescape(query.edit_message_text.call_args.args[0])
     assert "Saved submission details" in text and "1 hour late" in text and "a.pdf" in text
+
+
+@pytest.mark.asyncio
+async def test_hidden_zero_totals_clear_stale_error(monkeypatch, db, tmp_path):
+    for item_id, name in [(41, "Register(not to edit) total"), (42, "Course total")]:
+        upsert_grade(db, 1, 11, {"id": item_id, "itemname": name, "gradeformatted": "Error"})
+    gradebook = """<table class="user-grade"><tbody>
+      <tr><th id="row_41_1"><span class="gradeitemheader">Register(not to edit) total</span></th>
+      <td class="column-grade">0.00</td></tr>
+      <tr><th id="row_42_1"><span class="gradeitemheader">Course total</span></th>
+      <td class="column-grade">0.00</td></tr></tbody></table>"""
+    monkeypatch.setattr(
+        course_watcher,
+        "create_async_client",
+        lambda **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, text=gradebook))
+        ),
+    )
+    monkeypatch.setattr(course_watcher, "log_moodle_request", MagicMock())
+    monkeypatch.chdir(tmp_path)
+
+    ok, items, error = await course_watcher.fetch_course_grades("cookie", 11)
+    assert ok and error is None and len(items) == 2
+    assert course_watcher.detect_grade_changes(db, 1, 11, items) == []
+    course_watcher.sync_grades_for_course(db, 1, 11, items)
+
+    stored = db.query(MoodleGrade).filter_by(user_id=1, course_id=11).all()
+    assert [(g.grade_raw, g.grade_formatted) for g in stored] == [(None, None), (None, None)]
+    assert "Error" not in views.format_gradebook("Course", stored)
+
+
+def test_sync_deletes_grade_items_removed_from_gradebook(db):
+    seed_grade(db)
+    upsert_grade(db, 1, 11, {"id": 22, "itemname": "Deleted quiz", "gradeformatted": "50.00"})
+    upsert_grade(db, 1, 12, {"id": 23, "itemname": "Other course", "gradeformatted": "70.00"})
+
+    course_watcher.sync_grades_for_course(db, 1, 11, [payload("Old feedback")])
+
+    remaining = db.query(MoodleGrade).order_by(MoodleGrade.grade_item_id).all()
+    assert [(g.course_id, g.grade_item_id) for g in remaining] == [(11, 21), (12, 23)]

@@ -23,6 +23,7 @@ from telegram.ext import Application
 from filoutil.db.models import MoodleCourse, MoodleGrade, SessionRefresh, User
 from filoutil.db.moodle_courses import (
     archive_missing_courses,
+    delete_missing_grades,
     get_course_by_moodle_id,
     get_course_grades,
     get_grade_by_item_id,
@@ -389,12 +390,13 @@ async def fetch_course_grades(
                             (is_register_total or is_course_total)
                             and grade_raw is not None
                             and grade_raw == 0.0
+                            and not (is_register_total and register_final_available)
                         ):
-                            if is_register_total:
-                                if not register_final_available:
-                                    continue
-                            else:
-                                continue
+                            # Keep the row so a hidden zero total still overwrites a stale
+                            # stored value such as Moodle's transient "Error".
+                            item["graderaw"] = None
+                            item["gradeformatted"] = None
+                            item["suppressed_total"] = True
 
                         filtered_items.append(item)
 
@@ -513,6 +515,10 @@ def sync_grades_for_course(
             logger.error(
                 f"Failed to sync grade {grade_data.get('id')} for course {course_id}, user {user_id}: {e}"
             )
+    # Items the teacher deleted or hid would otherwise show their last value forever.
+    present_ids = [grade_data["id"] for grade_data in grade_items if grade_data.get("id")]
+    if present_ids:
+        delete_missing_grades(db, user_id, course_id, present_ids)
     return synced_grades
 
 
@@ -552,6 +558,9 @@ def detect_grade_changes(
             or "registertotal" in item_name_lower
         )
         is_course_total = "course total" in item_name_lower or item_name_lower == "total"
+
+        if grade_data.get("suppressed_total"):
+            continue
 
         stored_grade = stored_grades_map.get(grade_item_id)
         feedback_changed = "feedback" in grade_data and (

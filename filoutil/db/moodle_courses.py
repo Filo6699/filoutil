@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from filoutil.db.models import MoodleCourse, MoodleGrade
@@ -102,6 +102,21 @@ def get_course_grades(db: Session, user_id: int, course_id: int) -> list[MoodleG
         .scalars()
         .all()
     )
+
+
+def delete_missing_grades(
+    db: Session, user_id: int, course_id: int, present_item_ids: Iterable[int]
+) -> int:
+    """Delete stored grades whose items no longer appear in the course gradebook."""
+    result = db.execute(
+        delete(MoodleGrade).where(
+            MoodleGrade.user_id == user_id,
+            MoodleGrade.course_id == course_id,
+            MoodleGrade.grade_item_id.not_in(set(present_item_ids)),
+        )
+    )
+    db.commit()
+    return result.rowcount
 
 
 def get_grade_by_item_id(
